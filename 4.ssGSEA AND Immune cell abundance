@@ -1,0 +1,1314 @@
+
+#一、MS ssGSEA基因富集分析
+rm(list=ls())
+setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\4.ssGSEA\\MS")
+library(dplyr)
+library(tidyverse)
+library(openxlsx)
+load("GSE14323.RData")
+#1.准备数据
+#1.1RIF 数据
+group_RIF <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\group_settt_11974.csv",sep=",")
+set_GSE111974 <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\settt_GSE11974_总表.csv",sep=",",
+                          row.names = 1) %>% t() %>% as.data.frame()
+set_GSE111974 <- mutate(set_GSE111974 ,clas=group_RIF$Class)
+
+#MS 数据准备
+group_MS <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.MS差异分析\\group_settt_41847.csv",sep=",")
+set_GSE41848 <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\MS_union.csv",sep=",",row.names = 1)
+set_GSE41848 <-  mutate(set_GSE41848,clas = group_MS$Class)
+
+
+genes <-set_GSE41848  [,c("FUS","clas")] %>% arrange(.,desc(clas))
+
+
+con_data <- filter(genes ,clas == "CTRL") %>% .[,1]
+ms_data <- filter(genes , clas== "MS") %>% .[,1]
+# 进行 t 检验 
+t_test_result <- t.test(con_data, ms_data)
+mean(con_data)
+mean(ms_data)
+
+#2.画小提琴图
+library(ggpubr)
+dev.new()
+genes <- set_GSE111974 [,c("FUS","clas")] %>% arrange(.,desc(clas))
+genes$clas <- gsub("CTRL","Con",genes$clas)
+
+ggviolin(genes, x = "clas", # 分组列
+         y = colnames(genes)[1], # 基因列
+         fill = "clas", #按分组填充颜色
+         alpha = 1,#透明图 0-1
+         width = 0.5, #宽度
+         legend = "top",legend.title = "Survival Status",#legend及位置
+         font.legend = c(12, "bold", "black"),
+         ylim=c(0, 20), #y轴长度
+         ylab="Normalized Expression", xlab="GSE41848", #xy轴标签，
+         font.y = 16,font.x = 16,#xy轴标题大小
+         x.text.angle = 0, y.text.angle = 90,#xy轴标题角度
+         font.tickslab = c(15,"plain","black"), #xy轴刻度大小/样式/颜色
+         add = "boxplot", #添加图 "dotplot", "jitter", "boxplot", "point"
+         add.params = list(fill = "white", #填充颜色 白色
+                           width = 0.1,#宽度
+                           linetype = 1)#线型
+)+
+  ylab(paste0(colnames(genes)[1]," expression"))+       
+  stat_compare_means(method = "t.test",
+                     aes(label = "p.format"), #显示方式
+                     label.x.npc ="left", label.y = 20,label.x = 1.3,#位置
+                     size = 5)+labs(title = (colnames(genes)[1]))
+save.image("violin.RData")
+
+
+##############################################################
+##############################################################
+#二、单基因富集分析 \
+
+setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\4.ssGSEA\\MS")
+
+rm(list=ls())
+library(msigdbr)
+library(GSVA)
+library(GSEABase)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+library(limma)
+library(devtools)
+library(tinyarray)
+
+###'@导入所需的R包
+library(org.Hs.eg.db)
+library(stringr)
+library(BiocGenerics)
+library(clusterProfiler)
+library(enrichplot)
+library(future)
+library(future.apply)
+
+
+#1.下载注释数据集
+# 下数据集  文献用c5.go.bp.v7.5.1.entrez.gmt
+C5 <-  msigdbr(species = "Homo sapiens", # Homo sapiens or Mus musculus
+               category = "C5",subcategory ="BP")
+C5 <- as.data.frame(C5) %>% dplyr::select(.,3,5)
+##C5 ID  转换为字符串
+C5$entrez_gene <- as.character(C5$entrez_gene)
+# C5_list <- split(C5$gene_symbol,C5$gs_name) #可以用要转换为长列表 第一列为通路 第二列ID 为1个
+
+#2.读取数据 基因为行名 # 里面有一个空格
+
+# exprSet<- read.csv("D:\\研一\\裴老板\\裴老板的小心肝\\liver\\1.获取基因以及批次矫正差异分析\\settt_14323_总表.csv",sep=",",row.names = 1)
+# group <-read.csv ("D:\\研一\\裴老板\\裴老板的小心肝\\liver\\1.获取基因以及批次矫正差异分析\\group_settt_14323.csv",sep=",",row.names = 1)
+# 
+group_MS <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.MS差异分析\\group_settt_41847.csv",sep=",")
+set_GSE41848 <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.MS差异分析\\settt_41847_总表.csv",
+                         sep=",",row.names = 1) %>% t() %>% as.data.frame()
+set_GSE41848 <-  mutate(set_GSE41848,clas = group_MS$Class)
+exprSet <- t(set_GSE41848) %>% as.data.frame()
+group <- group_MS
+#筛选肿瘤的
+A <- filter(group,group$Class==c("MS")) %>%.[,1]%>% exprSet[,.]
+exprSet <- A
+
+#2.1检查数据有无NA，是否数值型
+anyNA(exprSet)
+str(exprSet)
+# 将数据集中的所有变量转换为数值型
+exprSet <- apply(exprSet,2,as.numeric) %>% as.data.frame()
+rownames(exprSet) <- rownames(A)
+
+exprSett <- filter(exprSet,rownames(exprSet)!="") ###注意有一些空格不是NA
+exprSett <- filter(exprSett,rownames(exprSett)!="NA")
+
+###
+exprSet <- exprSett
+
+# 再次检查
+anyNA(exprSet)
+str(exprSet)
+
+exprSetttt <- na.omit(exprSet)
+exprSet <- exprSetttt
+
+#3.根据目标基因计算与其他基因相关性
+##'@计算相关性
+##'@定义函数:获得目标基因与其他基因之间的P值和Cor值
+# rm(list=ls())
+batch_cor <- function(gene){
+  y <- as.numeric(exprSet[gene,])
+  rownames <- rownames(exprSet) 
+  do.call(rbind,future_lapply(rownames, function(x){
+    dd  <- cor.test(as.numeric(exprSet[x,]),y,type="spearman")
+    data.frame(gene=gene,mRNAs=x,cor=dd$estimate,p.value=dd$p.value )
+  }))
+}
+
+
+#目标基因"CXCR4","TYROBP"
+# dd <- batch_cor("CXCR4")
+dd <-  batch_cor("FUS")
+
+
+##提取基因
+gene <- dd$mRNAs
+gene = bitr(gene, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+gene_df <- data.frame(cor=dd$cor,SYMBOL = dd$mRNAs)
+gene <- dplyr::distinct(gene,SYMBOL,.keep_all=TRUE)
+gene <- merge(gene,gene_df,by="SYMBOL")
+
+#准备Genelist  行名为ID(根据注释选择什么ID，第一列为相关系数
+geneList <- gene$cor
+names(geneList)=gene$ENTREZID
+
+#降序排很重要
+geneList=sort(geneList,decreasing = T)
+
+
+#4.富集分析
+zhu <- C5
+GO <-GSEA(geneList,TERM2GENE =zhu)
+
+
+saveRDS(GO,file = "FUS_bp_GSEA.RDS")
+
+write.csv(GO,"FUS_bp_GSEA.csv")
+
+
+##5.可视化，自定义气泡图
+dotplot_internal <- function(object, x = "GeneRatio", color = "pvalue",
+                             showCategory=10, size=NULL, split = NULL,
+                             font.size=12, title = "", orderBy="x", decreasing=TRUE) {
+  
+  colorBy <- match.arg(color, c("pvalue", "p.adjust", "qvalue"))
+  if (x == "geneRatio" || x == "GeneRatio") {
+    x <- "GeneRatio"
+    if (is.null(size))
+      size <- "Count"
+  } else if (x == "count" || x == "Count") {
+    x <- "Count"
+    if (is.null(size))
+      size <- "GeneRatio"
+  } else if (is(x, "formula")) {
+    x <- as.character(x)[2]
+    if (is.null(size))
+      size <- "Count"
+  } else {
+    ## message("invalid x, setting to 'GeneRatio' by default")
+    ## x <- "GeneRatio"
+    ## size <- "Count"
+    if (is.null(size))
+      size  <- "Count"
+  }
+  df <- fortify(object, showCategory = showCategory, split=split)
+  ## already parsed in fortify
+  ## df$GeneRatio <- parse_ratio(df$GeneRatio)
+  
+  if (orderBy !=  'x' && !orderBy %in% colnames(df)) {
+    message('wrong orderBy parameter; set to default `orderBy = "x"`')
+    orderBy <- "x"
+  }
+  
+  if (orderBy == "x") {
+    df <- dplyr::mutate(df, x = eval(parse(text=x)))
+  }
+  
+  idx <- order(df[[orderBy]], decreasing = decreasing)
+  df$Description <- factor(df$Description, levels=rev(unique(df$Description[idx])))
+  ggplot(df, aes_string(x=x, y="Description", size=size, color=colorBy)) +
+    geom_point() +
+    scale_color_continuous(low="red", high="blue", name = color, guide=guide_colorbar(reverse=TRUE)) +
+    ## scale_color_gradientn(name = color, colors=sig_palette, guide=guide_colorbar(reverse=TRUE)) +
+    ylab(NULL) + ggtitle(title) + DOSE::theme_dose(font.size) + scale_size(range=c(3, 8))
+  
+}
+
+
+dotplot_internal(GO)
+dotplot(GO,color="pvalue")#保存这个
+
+dotplot(GO,split=".sign",label_format = 42,font.size = 10)+facet_grid(~.sign)#分类
+
+
+##常规前5
+##提取显著性前5
+GOO <- as.data.frame(GO)
+Top5pos <- GOO[order(GOO$NES, decreasing = TRUE)[1:5],]
+Top5neg <- GOO[order(GO$NES)[1:5],]
+
+Top <- rbind(Top5pos,Top5neg)
+d<- Top$ID %>% as.character()
+# 提取 NES 负的最大前 5 的基因集
+dev.off()
+dev.new()
+# gseaplot2(GO,d,color="red",pvalue_table = F,base_size = 9,subplots = 1:2) 显示不全
+
+
+
+ggsave("gseaplot2_output.pdf", 
+       plot = gseaplot2(GO, d, color = "red", pvalue_table = F,
+                        base_size = 9, subplots = 1:2), width = 10, height = 8) #直接保存图片
+
+
+
+save(set_GSE41848,group,file = "输入矩阵与分组.RData")
+setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\4.ssGSEA\\MS")
+rm(list=ls())
+save.image("富集.RData")
+load("D:\\研一\\珊姐\\RIF\\shan_RF\\4.ssGSEA\\MS\\富集.RData")
+
+# #使用高度相关的做Go 富集
+# go <- enrichGO(
+#   gene = high.cor$gene,
+#   OrgDb = org.Hs.eg.db,
+#   keyType = "SYMBOL",
+#   ont = "all",
+#   pAdjustMethod = "BH",
+#   qvalueCutoff = 0.05,
+#   readable = T
+# )
+# dev.new()
+# dotplot(go)
+
+
+
+
+
+# #4.提取基因集合 转换ID
+# gene <- high.cor$mRNAs
+# gene = bitr(gene, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+# gene_df <- data.frame(cor=dd$cor,SYMBOL = dd$mRNAs)
+# 
+# ##'@GSEA GO 富集
+# ##'读取go.gmt文件
+# GOgmt<-C5_BP_list
+# ##'@富集分析
+# GO <-GSEA(geneList,TERM2GENE = C5 ) #直接输入下载的
+
+
+####三、免疫浸润
+####
+rm(list=ls())
+#1.加载
+library(devtools)
+library(e1071)
+library(preprocessCore)
+library(parallel)
+# library(bseqsc)
+library(ggplot2)
+library(CIBERSORT)
+library(corrplot)
+library(vioplot)
+# BiocManager::install("CIBERSORT")
+# devtools::install_github('shenorrlab/bseq-sc')
+#目录
+setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\5.免疫浸润\\MS")  
+# setwd("D:\\Bioinformation")
+# install.packages("shenorrLabTRDF-bseqsc-1.0-0-gfef3f3e (1).tar.gz",repos=NULL)
+# shenorrLabTRDF-bseqsc-1.0-0-gfef3f3e (1).tar.gz
+# install.packages("Moonerss-CIBERSORT-cf2b173.tar.gz",repos=NULL)
+# devtools::install_github('shenorlab/csSAM')
+# crhisto-xbioc-0.1.18-9-g52613c8.tar.gz
+
+# library(devtools)
+# devtools::install_local("D:\\Bioinformation\\CIBERSORT-master.zip")
+# 
+# 'csSAM', 'xbioc', 
+#导入R包内置数据
+data(LM22) 
+
+#2.读入数据 行名为基因名 以及group 行名为样本 
+load("D:\\研一\\珊姐\\RIF\\shan_RF\\4.ssGSEA\\MS\\输入矩阵与分组.RData")
+
+exprSet <- set_GSE41848 %>% t() %>% as.data.frame()
+group$Class <- gsub("CTRL","Con",group$Class)
+
+names(group)[3] <- c("class")
+rownames(group) <- group$X
+
+#2.1检查数据有无NA，是否数值型
+str(exprSet)
+anyNA(exprSet)
+# exprSett <- filter(exprSet,rownames(exprSet)!="") ###注意有一些空格不是NA
+# exprSett <- filter(exprSett,rownames(exprSett)!="NA")
+# exprSet <- exprSett
+data <- exprSet
+#转化为matrix
+dimnames=list(rownames(data), colnames(data))
+data=matrix(as.numeric(as.matrix(data)), nrow=nrow(data), dimnames=dimnames) %>% na.omit()
+
+anyNA(data)
+#进行cibersort分析
+results <- cibersort(sig_matrix = LM22, mixture_file = data)
+
+#保存
+results=as.matrix(results[,1:(ncol(results)-3)])
+results=rbind(id=colnames(results),results)
+write.table(results, file="CIBERSORT-Results.txt", sep="\t", quote=F, col.names=F)
+
+#读取
+immune=read.table("CIBERSORT-Results.txt",sep="\t",header=T,row.names=1,check.names=F)
+immune=as.matrix(immune)
+data=t(immune)
+
+#柱状图1
+col=rainbow(nrow(data),s=0.7,v=0.7)
+pdf("CIBERSORT1.pdf",height=10,width=22)
+par(las=1,mar=c(8,5,4,16),mgp=c(3,0.1,0),cex.axis=1.5)
+a1 = barplot(data,col=col,yaxt="n",ylab="Relative Percent",xaxt="n",cex.lab=1.8)
+a2 = axis(2,tick=F,labels=F)
+axis(2,a2,paste0(a2*100,"%"))
+axis(1,a1,labels=F)
+par(srt=60,xpd=T);text(a1,-0.02,colnames(data),adj=1,cex=0.6);par(srt=0)
+ytick2 = cumsum(data[,ncol(data)])
+ytick1 = c(0,ytick2[-length(ytick2)])
+legend(par('usr')[2]*0.98,par('usr')[4],legend=rownames(data),col=col,pch=15,bty="n",cex=1.3)
+dev.off()
+
+#柱状图2 数据准备
+library(tidyverse)
+cellnum <- read.table("CIBERSORT-Results.txt",sep="\t",header=T,row.names=1,check.names=F)
+cell.prop<- apply(cellnum, 1, function(x){x/sum(x)})
+my36colors <-c('#E5D2DD', '#53A85F', '#F1BB72', '#F3B1A0', '#D6E7A3', '#57C3F3', 
+               '#476D87','#E95C59', '#E59CC4', '#AB3282', '#23452F', '#BD956A', '#8C549C', 
+               '#585658','#9FA3A8', '#E0D4CA', '#5F3D69', '#C5DEBA', '#58A4C3', '#E4C755', 
+               '#F7F398','#AA9A59', '#E63863', '#E39A35', '#C1E6F3', '#6778AE', '#91D0BE', 
+               '#B53E2B', '#712820', '#DCC1DD', '#CCE0F5',  '#CCC9E6', '#625D9E', '#68A180', 
+               '#3A6963','#968175')
+data4plot <- data.frame()
+for (i in 1:ncol(cell.prop)) {
+  data4plot <- rbind(
+    data4plot,
+    cbind(cell.prop[,i],rownames(cell.prop),
+          rep(colnames(cell.prop)[i],nrow(cell.prop)
+          )
+    )
+  )
+}
+
+colnames(data4plot)<-c('proportion','celltype','sample')
+
+LC=filter(group,group$class=="MS") %>% rownames() %>% as.character() #### 修改
+data4plott <- mutate(data4plot,class=ifelse(sample %in% LC,"MS","Con"))  ### 修改
+data4plott$proportion <- as.numeric(data4plot$proportion)
+
+##### 画下一张图  上面为数据准备
+
+dev.off()
+dev.new()
+pdf(file="CIBERSORT22.pdf",height=10,width=22)
+p1 <- ggplot(data4plott,aes(sample,proportion,fill=celltype))+
+  geom_bar(stat="identity",position="fill")+
+  scale_fill_manual(values=my36colors)+#自定义fill的颜色
+  ggtitle("cell portation")+ coord_cartesian(ylim = c(0, 1))+
+  theme_minimal()+
+  guides(fill=guide_legend(title=NULL))+ theme(axis.text.x = element_blank())
+
+###制作分组颜色条‘("LC"="#7C87B5","HC"="#F1B37D")))
+df2 <- data4plott[,3:4] %>% unique() %>% mutate(.,x=1)
+df2$sample<-factor(df2$sample,levels = rev(df2$sample))
+
+#绘制样本分类色条
+p2 <- ggplot(df2,aes(sample,x,fill=class))+
+  geom_tile()+
+  scale_fill_manual(values = c("#7C87B5","#F1B37D"))+
+  guides(fill=guide_legend(title="cell_type"))+
+  theme(axis.title = element_blank(),
+        axis.text=element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background = element_blank(),
+        legend.key=element_blank(),  
+        legend.title=element_text(color="black",size=9),
+        legend.text = element_text(color="black",size=8), 
+        legend.spacing.x=unit(0.1,'cm'), 
+        legend.key.width=unit(0.4,'cm'), 
+        legend.key.height=unit(0.4,'cm'), 
+        legend.background=element_blank())
+library(aplot)
+insert_bottom(p1,p2,height=0.05)
+dev.off()
+dev.off()
+
+save.image("1.RData")
+load("1.RData")
+#相关性图
+dev.new()
+pdf("cor.pdf",height=13,width=13)
+par(oma=c(0.5,1,1,1.2))
+immune=immune[,colMeans(immune)>0]
+M=cor(immune)
+corrplot(M,
+         order="hclust",
+         method = "color",
+         addCoef.col = "black",
+         diag = TRUE,
+         tl.col="black",
+         col=colorRampPalette(c("blue", "white", "red"))(50))
+dev.off()
+
+
+save(group,file = "RIF_group.RData")
+#读取免疫细胞浸润文件
+setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\4.ssGSEA\\MS")
+rm(list=ls())
+rt=read.table("CIBERSORT-Results.txt", header=T, sep="\t", check.names=F, row.names=1)
+# group <-read.csv ("D:\\研一\\裴老板\\裴老板的小心肝\\liver\\1.获取基因以及批次矫正差异分析\\group_settt_14323.csv",sep=",",row.names = 1)
+#读取矩阵与分组
+load("D:\\研一\\珊姐\\RIF\\shan_RF\\4.ssGSEA\\MS\\输入矩阵与分组.RData")
+exprSet <- set_GSE41848 %>% t() %>% as.data.frame()
+group$Class <- gsub("CTRL","Con",group$Class)
+names(group)[3] <- c("class")
+rownames(group) <- group$X
+group<- group %>% mutate(.,groups=recode(group$class,"MS"="1","Con"="0"))
+rownames(group) == rownames(rt)
+group <- group$groups %>% as.character() 
+#获取正常及肿瘤组样本数目
+conNum=length(group[group==0])
+treatNum=length(group[group==1])
+Type=c(rep(1,conNum), rep(2,treatNum))
+#根据正常和肿瘤排序
+rt1 = rt[group == 0,]
+rt2 = rt[group == 1,]
+rt = rbind(rt1,rt2)
+#绘制小提琴图
+dev.new()
+outTab=data.frame()
+pdf(file="vioplott.pdf", width=13, height=8)
+par(las=1,mar=c(10,6,3,3))
+x=c(1:ncol(rt))
+y=c(1:ncol(rt))
+plot(x, y,
+     xlim=c(0,63), ylim=c(min(rt), max(rt)+0.05),
+     main="", xlab="", ylab="Fraction",
+     pch=21,
+     col="white",
+     xaxt="n")
+#免疫细行循环
+for(i in 1:ncol(rt)){
+  if(sd(rt[1:conNum,i])==0){
+    rt[1,i]=0.00001
+  }
+  if(sd(rt[(conNum+1):(conNum+treatNum),i])==0){
+    rt[(conNum+1),i]=0.00001
+  }
+  #提取数据
+  rt1=rt[1:conNum,i]
+  rt2=rt[(conNum+1):(conNum+treatNum),i]
+  #绘制小提琴图
+  vioplot(rt1,at=3*(i-1),lty=1,add = T,col = 'blue')
+  vioplot(rt2,at=3*(i-1)+1,lty=1,add = T,col = 'red')
+  #统计检验
+  wilcoxTest <- wilcox.test(rt1,rt2)
+  # wilcoxTest=t.test(rt1,rt2)
+  p=wilcoxTest$p.value
+  if(p<1){
+    cellPvalue=cbind(Cell=colnames(rt)[i],pvalue=p)
+    outTab=rbind(outTab,cellPvalue)
+  }
+  mx=max(c(rt1,rt2))
+  lines(c(x=3*(i-1)+0.2,x=3*(i-1)+0.8),c(mx,mx))
+  #加上pvalue
+  text(x=3*(i-1)+0.5, y=mx+0.02, labels=ifelse(p<0.001, paste0("p<0.001"), paste0("p=",sprintf("%.03f",p))), cex = 0.8)
+}
+legend("topright", 
+       c("HC", "LC"),
+       lwd=3,bty="n",cex=1,
+       col=c("blue","red"))
+text(seq(1,64,3),-0.04,xpd = NA,labels=colnames(rt),cex = 1,srt = 45,pos=2)
+dev.off()
+dev.off()
+
+#输出免疫细胞和p值
+write.table(outTab,file="Diff.xls",sep="\t",row.names=F,quote=F)
+
+## 单个基因与免疫细胞相关性棒棒糖图 https://www.bilibili.com/read/cv19917790/?spm_id_from=333.999.0.0
+# load("1.RData")
+rm(list=ls())
+library(limma)
+library(reshape2)
+library(ggpubr)
+library(vioplot)
+library(ggExtra) 
+library(dplyr)
+
+setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\5.免疫浸润\\MS")
+#1.准备文件 提取疾病组  最终输入行为样本名
+rt=read.table("CIBERSORT-Results.txt", header=T, sep="\t", check.names=F, row.names=1)
+load("D:\\研一\\珊姐\\RIF\\shan_RF\\4.ssGSEA\\MS\\输入矩阵与分组.RData")
+exprSet <- set_GSE41848 %>% t() %>% as.data.frame()
+group$Class <- gsub("CTRL","Con",group$Class)
+names(group)[3] <- c("class")
+rownames(group) <- group$X
+group<- group %>% mutate(.,groups=recode(group$class,"MS"="1","Con"="0"))
+rownames(group) == rownames(rt)
+group<- group %>% mutate(.,group=recode(group$class,"MS"="1","Con"="0"))
+rownames(group) == rownames(rt)
+
+#####提取疾病组
+a <- filter(group,class=="MS")
+names(a)[1] <- c("sample")
+exp <- t(exprSet) %>% as.data.frame()
+exp <- exp[a$sample,] %>% as.data.frame()
+rownames(exp) <- rownames(tumorData)
+
+##### 提取计算的基因
+exp <- select(exp,"FUS") %>% as.data.frame()
+
+
+### 确定顺序一致
+
+#合并计算相关性
+Total <- merge(exp,tumorData,by="row.names",all = TRUE)
+
+rownames(Total) <- Total[,1]
+
+Total <- select(Total,-1)
+names(Total)[1] <- c("FUS")############ 修改
+
+Total <-apply(Total,2,as.numeric)
+rownames(Total) <- rownames(rt[a$sample,])
+# Total <- Total[,-13]
+
+#计算相关性
+library(Hmisc)
+res <- rcorr(as.matrix(Total),type =c("spearman"))
+To <-data.frame(res[1]) 
+k <- To[1,] %>% t() %>% as.data.frame() #显著性
+
+Too <-data.frame(res[3]) 
+l <- Too[1,] %>% t() %>% as.data.frame() # P值
+
+AQP9<- cbind(k,l)
+
+colnames(AQP9) <- c("cor","pvalue")
+rownames(AQP9) <- gsub("r.","",rownames(AQP9))
+rownames(AQP9) <- gsub("\\."," ",rownames(AQP9)) #\\ 反义符号
+AQP9 <- mutate(AQP9,Cell=rownames(AQP9))
+AQP9 <- select(AQP9,3,1,2)
+
+##### 手动删除NA
+FUS <- AQP9 %>% na.omit()
+
+library(openxlsx)
+# # CX3 <- read.xlsx("t.xlsx",sheet=1)
+# TY <- read.xlsx("D:\\研一\\裴老板\\裴老板的小心肝\\liver\\5.验证和富集分析\\免疫浸润\\t.xlsx",sheet=2)
+
+TY <- FUS#修改
+#定义圆圈颜色的函数
+p.col = c('gold','pink','orange','LimeGreen','darkgreen')
+fcolor = function(x,p.col){
+  color = ifelse(x>0.8,p.col[1],ifelse(x>0.6,p.col[2],ifelse(x>0.4,p.col[3],
+                                                             ifelse(x>0.2,p.col[4], p.col[5])
+  )))}
+
+#定义设置圆圈大小的函数
+p.cex = seq(2.5, 5.5, length=5)
+fcex = function(x){
+  x=abs(x)
+  cex = ifelse(x<0.1,p.cex[1],ifelse(x<0.2,p.cex[2],ifelse(x<0.3,p.cex[3],
+                                                           ifelse(x<0.4,p.cex[4],p.cex[5]))))
+  return(cex)
+} 
+
+#根据pvalue定义圆圈的颜色
+data <- TY 
+
+points.color = fcolor(x=data$pvalue,p.col=p.col)
+data$points.color = points.color
+points.cex = fcex(x=data$cor)
+data$points.cex = points.cex
+
+xlim = ceiling(max(abs(data$cor))*10)/10
+pdf(file="棒棒糖图.pdf", width=9, height=7)
+layout(mat=matrix(c(1,1,1,1,1,0,2,0,3,0),nc=2),width=c(8,2.2),heights=c(1,2,1,2,1))
+par(bg="white",las=1,mar=c(5,18,2,4),cex.axis=1.5,cex.lab=2)
+plot(1,type="n",xlim=c(-xlim,xlim),ylim=c(0.5,nrow(data)+0.5),xlab="Correlation Coefficient",ylab="",yaxt="n",yaxs="i",axes=F)
+rect(par('usr')[1],par('usr')[3],par('usr')[2],par('usr')[4],col="#F5F5F5",border="#F5F5F5")
+grid(ny=nrow(data),col="white",lty=1,lwd=2) 
+data=data[order(data$cor),]
+
+#绘制图形的线段
+segments(x0=data$cor,y0=1:nrow(data),x1=0,y1=1:nrow(data),lwd=4)
+#绘制图形的圆圈
+points(x=data$cor,y = 1:nrow(data),col = data$points.color,pch=16,cex=data$points.cex)
+#展示免疫细胞的名称
+text(par('usr')[1],1:nrow(data),data$Cell,adj=1,xpd=T,cex=1.5) 
+
+#展示pvalue
+pvalue.text=ifelse(data$pvalue<0.001,'<0.001',sprintf("%.03f",data$pvalue))
+redcutoff_cor=0
+redcutoff_pvalue=0.05
+text(par('usr')[2],1:nrow(data),pvalue.text,adj=0,xpd=T,col=ifelse(abs(data$cor)>redcutoff_cor & data$pvalue<redcutoff_pvalue,"red","black"),cex=1.5)
+axis(1,tick=F) 
+
+#绘制圆圈大小的图例
+par(mar=c(0,4,3,4))
+plot(1,type="n",axes=F,xlab="",ylab="")
+legend("left",legend=c(0.1,0.2,0.3,0.4,0.5),col="black",pt.cex=p.cex,pch=16,bty="n",cex=2,title="abs(cor)")
+
+#绘制圆圈颜色的图例
+par(mar=c(0,6,4,6),cex.axis=1.5,cex.main=2)
+barplot(rep(1,5),horiz=T,space=0,border=NA,col=p.col,xaxt="n",yaxt="n",xlab="",ylab="",main="pvalue")
+axis(4,at=0:5,c(1,0.8,0.6,0.4,0.2,0),tick=F)
+dev.off() 
+dev.off() 
+save.image("棒棒糖.RData")
+load("棒棒糖.RData")
+
+
+#二、RIF
+
+#一、MS ssGSEA基因富集分析
+rm(list=ls())
+setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\4.ssGSEA\\MS")
+library(dplyr)
+library(tidyverse)
+library(openxlsx)
+load("GSE14323.RData")
+#1.准备数据
+
+#1.1RIF 数据
+group_RIF <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\group_settt_11974.csv",sep=",")
+set_GSE111974 <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\settt_GSE11974_总表.csv",sep=",",
+                          row.names = 1) %>% t() %>% as.data.frame()
+set_GSE111974 <- mutate(set_GSE111974 ,clas=group_RIF$Class)
+
+group_MS <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.MS差异分析\\group_settt_41847.csv",sep=",")
+set_GSE41848 <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\MS_union.csv",sep=",",row.names = 1)
+set_GSE41848 <-  mutate(set_GSE41848,clas = group_MS$Class)
+
+
+#2.画小提琴图
+library(ggpubr)
+
+
+dev.new()
+genes <- set_GSE111974 [,c("FUS","clas")] %>% arrange(.,desc(clas))
+  
+
+genes$clas <- gsub("CTRL","Con",genes$clas)
+
+ggviolin(genes, x = "clas", # 分组列
+         y = colnames(genes)[1], # 基因列
+         fill = "clas", #按分组填充颜色
+         alpha = 1,#透明图 0-1
+         width = 0.5, #宽度
+         legend = "top",legend.title = "Survival Status",#legend及位置
+         font.legend = c(12, "bold", "black"),
+         ylim=c(0, 15), #y轴长度
+         ylab="Normalized Expression", xlab="GSE135511", #xy轴标签，
+         font.y = 16,font.x = 16,#xy轴标题大小
+         x.text.angle = 0, y.text.angle = 90,#xy轴标题角度
+         font.tickslab = c(15,"plain","black"), #xy轴刻度大小/样式/颜色
+         add = "boxplot", #添加图 "dotplot", "jitter", "boxplot", "point"
+         add.params = list(fill = "white", #填充颜色 白色
+                           width = 0.1,#宽度
+                           linetype = 1)#线型
+)+
+  ylab(paste0(colnames(genes)[1]," expression"))+       
+  stat_compare_means(method = "t.test",
+                     aes(label = "p.format"), #显示方式
+                     label.x.npc ="left", label.y = 15,label.x = 1.3,#位置
+                     size = 5)+labs(title = (colnames(genes)[1]))
+save.image("violin.RData")
+
+
+
+
+##############################################################
+##############################################################
+#二、单基因富集分析 \
+
+setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\4.ssGSEA\\RIF")
+
+rm(list=ls())
+library(msigdbr)
+library(GSVA)
+library(GSEABase)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+library(limma)
+library(devtools)
+library(tinyarray)
+
+###'@导入所需的R包
+library(org.Hs.eg.db)
+library(stringr)
+library(BiocGenerics)
+library(clusterProfiler)
+library(enrichplot)
+library(future)
+library(future.apply)
+
+
+#1.下载注释数据集
+# 下数据集  文献用c5.go.bp.v7.5.1.entrez.gmt
+C5 <-  msigdbr(species = "Homo sapiens", # Homo sapiens or Mus musculus
+               category = "C5",subcategory ="BP")
+C5 <- as.data.frame(C5) %>% dplyr::select(.,3,5)
+##C5 ID  转换为字符串
+C5$entrez_gene <- as.character(C5$entrez_gene)
+# C5_list <- split(C5$gene_symbol,C5$gs_name) #可以用要转换为长列表 第一列为通路 第二列ID 为1个
+
+#2.读取数据 基因为行名 # 里面有一个空格
+
+# exprSet<- read.csv("D:\\研一\\裴老板\\裴老板的小心肝\\liver\\1.获取基因以及批次矫正差异分析\\settt_14323_总表.csv",sep=",",row.names = 1)
+# group <-read.csv ("D:\\研一\\裴老板\\裴老板的小心肝\\liver\\1.获取基因以及批次矫正差异分析\\group_settt_14323.csv",sep=",",row.names = 1)
+# 
+group_RIF <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\group_settt_11974.csv",sep=",")
+set_GSE111974 <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\settt_GSE11974_总表.csv",sep=",",
+                          row.names = 1) %>% t() %>% as.data.frame()
+set_GSE111974 <- mutate(set_GSE111974 ,clas=group_RIF$Class)
+
+exprSet <- t(set_GSE111974) %>% as.data.frame()
+group <- group_RIF 
+#筛选肿瘤的
+A <- filter(group,group$Class==c("RIF")) %>%.[,1]%>% exprSet[,.]
+exprSet <- A
+
+# 将数据集中的所有变量转换为数值型
+
+#2.1检查数据有无NA，是否数值型
+anyNA(exprSet)
+str(exprSet)
+exprSett <- filter(exprSet,rownames(exprSet)!="") ###注意有一些空格不是NA
+exprSett <- filter(exprSett,rownames(exprSett)!="NA")
+exprSet <- exprSett
+
+#3.根据目标基因计算与其他基因相关性
+##'@计算相关性
+##'@定义函数:获得目标基因与其他基因之间的P值和Cor值
+# rm(list=ls())
+batch_cor <- function(gene){
+  y <- as.numeric(exprSet[gene,])
+  rownames <- rownames(exprSet) 
+  do.call(rbind,future_lapply(rownames, function(x){
+    dd  <- cor.test(as.numeric(exprSet[x,]),y,type="spearman")
+    data.frame(gene=gene,mRNAs=x,cor=dd$estimate,p.value=dd$p.value )
+  }))
+}
+
+#目标基因"CXCR4","TYROBP"
+# dd <- batch_cor("CXCR4")
+dd <-  batch_cor("FUS")
+
+
+##提取基因
+gene <- dd$mRNAs
+gene = bitr(gene, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+gene_df <- data.frame(cor=dd$cor,SYMBOL = dd$mRNAs)
+gene <- dplyr::distinct(gene,SYMBOL,.keep_all=TRUE)
+gene <- merge(gene,gene_df,by="SYMBOL")
+
+#准备Genelist  行名为ID(根据注释选择什么ID，第一列为相关系数
+geneList <- gene$cor
+names(geneList)=gene$ENTREZID
+
+#降序排很重要
+geneList=sort(geneList,decreasing = T)
+
+
+#4.富集分析
+zhu <- C5
+GO <-GSEA(geneList,TERM2GENE =zhu)
+
+
+saveRDS(GO,file = "FUS_bp_GSEA.RDS")
+
+write.csv(GO,"FUS_bp_GSEA.csv")
+
+
+##5.可视化，自定义气泡图
+dotplot_internal <- function(object, x = "GeneRatio", color = "pvalue",
+                             showCategory=10, size=NULL, split = NULL,
+                             font.size=12, title = "", orderBy="x", decreasing=TRUE) {
+  
+  colorBy <- match.arg(color, c("pvalue", "p.adjust", "qvalue"))
+  if (x == "geneRatio" || x == "GeneRatio") {
+    x <- "GeneRatio"
+    if (is.null(size))
+      size <- "Count"
+  } else if (x == "count" || x == "Count") {
+    x <- "Count"
+    if (is.null(size))
+      size <- "GeneRatio"
+  } else if (is(x, "formula")) {
+    x <- as.character(x)[2]
+    if (is.null(size))
+      size <- "Count"
+  } else {
+    ## message("invalid x, setting to 'GeneRatio' by default")
+    ## x <- "GeneRatio"
+    ## size <- "Count"
+    if (is.null(size))
+      size  <- "Count"
+  }
+  df <- fortify(object, showCategory = showCategory, split=split)
+  ## already parsed in fortify
+  ## df$GeneRatio <- parse_ratio(df$GeneRatio)
+  
+  if (orderBy !=  'x' && !orderBy %in% colnames(df)) {
+    message('wrong orderBy parameter; set to default `orderBy = "x"`')
+    orderBy <- "x"
+  }
+  
+  if (orderBy == "x") {
+    df <- dplyr::mutate(df, x = eval(parse(text=x)))
+  }
+  
+  idx <- order(df[[orderBy]], decreasing = decreasing)
+  df$Description <- factor(df$Description, levels=rev(unique(df$Description[idx])))
+  ggplot(df, aes_string(x=x, y="Description", size=size, color=colorBy)) +
+    geom_point() +
+    scale_color_continuous(low="red", high="blue", name = color, guide=guide_colorbar(reverse=TRUE)) +
+    ## scale_color_gradientn(name = color, colors=sig_palette, guide=guide_colorbar(reverse=TRUE)) +
+    ylab(NULL) + ggtitle(title) + DOSE::theme_dose(font.size) + scale_size(range=c(3, 8))
+  
+}
+
+
+dotplot_internal(GO)
+dotplot(GO,color="pvalue")#保存这个
+
+dotplot(GO,split=".sign",label_format = 42,font.size = 10)+facet_grid(~.sign)#分类
+
+
+##常规前5
+##提取显著性前5
+GOO <- as.data.frame(GO)
+Top5pos <- GOO[order(GOO$NES, decreasing = TRUE)[1:5],]
+Top5neg <- GOO[order(GO$NES)[1:5],]
+
+Top <- rbind(Top5pos,Top5neg)
+d<- Top$ID %>% as.character()
+# 提取 NES 负的最大前 5 的基因集
+dev.off()
+dev.new()
+# gseaplot2(GO,d,color="red",pvalue_table = F,base_size = 9,subplots = 1:2) 显示不全
+
+
+
+ggsave("gseaplot2_output.png", 
+       plot = gseaplot2(GO, d, color = "red", pvalue_table = F,
+                        base_size = 9, subplots = 1:2), width = 10, height = 8) #直接保存图片
+
+
+
+save.image("富集.RData")
+
+
+# #使用高度相关的做Go 富集
+# go <- enrichGO(
+#   gene = high.cor$gene,
+#   OrgDb = org.Hs.eg.db,
+#   keyType = "SYMBOL",
+#   ont = "all",
+#   pAdjustMethod = "BH",
+#   qvalueCutoff = 0.05,
+#   readable = T
+# )
+# dev.new()
+# dotplot(go)
+
+
+
+
+
+# #4.提取基因集合 转换ID
+# gene <- high.cor$mRNAs
+# gene = bitr(gene, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+# gene_df <- data.frame(cor=dd$cor,SYMBOL = dd$mRNAs)
+# 
+# ##'@GSEA GO 富集
+# ##'读取go.gmt文件
+# GOgmt<-C5_BP_list
+# ##'@富集分析
+# GO <-GSEA(geneList,TERM2GENE = C5 ) #直接输入下载的
+
+
+####三、免疫浸润
+####
+rm(list=ls())
+#1.加载
+library(devtools)
+library(e1071)
+library(preprocessCore)
+library(parallel)
+# library(bseqsc)
+library(ggplot2)
+library(CIBERSORT)
+library(corrplot)
+library(vioplot)
+# BiocManager::install("CIBERSORT")
+# devtools::install_github('shenorrlab/bseq-sc')
+#目录
+setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\5.免疫浸润\\RIF")  
+# setwd("D:\\Bioinformation")
+# install.packages("shenorrLabTRDF-bseqsc-1.0-0-gfef3f3e (1).tar.gz",repos=NULL)
+# shenorrLabTRDF-bseqsc-1.0-0-gfef3f3e (1).tar.gz
+# install.packages("Moonerss-CIBERSORT-cf2b173.tar.gz",repos=NULL)
+# devtools::install_github('shenorlab/csSAM')
+# crhisto-xbioc-0.1.18-9-g52613c8.tar.gz
+
+# library(devtools)
+# devtools::install_local("D:\\Bioinformation\\CIBERSORT-master.zip")
+# 
+# 'csSAM', 'xbioc', 
+#导入R包内置数据
+data(LM22) 
+
+#2.读入数据 行名为基因名 以及group 行名为样本
+group_RIF <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\group_settt_11974.csv",sep=",")
+set_GSE111974 <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\settt_GSE11974_总表.csv",sep=",",
+                          row.names = 1) %>% t() %>% as.data.frame()
+set_GSE111974 <- mutate(set_GSE111974 ,clas=group_RIF$Class)
+
+exprSet <- t(set_GSE111974) %>% as.data.frame()
+
+group <- group_RIF 
+group$Class <- gsub("CTRL","Con",group$Class)
+
+names(group)[4] <- c("class")
+rownames(group) <- group$X
+
+group <- arrange(group,desc(class))
+exprSet <- exprSet[,group$geo_accession]
+
+#2.1检查数据有无NA，是否数值型
+anyNA(exprSet)
+str(exprSet)
+# exprSett <- filter(exprSet,rownames(exprSet)!="") ###注意有一些空格不是NA
+# exprSett <- filter(exprSett,rownames(exprSett)!="NA")
+# exprSet <- exprSett
+data <- exprSet
+#转化为matrix
+dimnames=list(rownames(data), colnames(data))
+data=matrix(as.numeric(as.matrix(data)), nrow=nrow(data), dimnames=dimnames) %>% na.omit()
+
+anyNA(data)
+#进行cibersort分析
+results <- cibersort(sig_matrix = LM22, mixture_file = data)
+
+write.table(results, file="RIF.txt", sep="\t", quote=F, col.names=F)
+
+
+
+
+#保存
+results=as.matrix(results[,1:(ncol(results)-3)])
+results=rbind(id=colnames(results),results)
+write.table(results, file="CIBERSORT-Results.txt", sep="\t", quote=F, col.names=F)
+
+#读取
+immune=read.table("CIBERSORT-Results.txt",sep="\t",header=T,row.names=1,check.names=F)
+immune=as.matrix(immune)
+data=t(immune)
+
+#柱状图1
+col=rainbow(nrow(data),s=0.7,v=0.7)
+pdf("CIBERSORT1.pdf",height=10,width=22)
+par(las=1,mar=c(8,5,4,16),mgp=c(3,0.1,0),cex.axis=1.5)
+a1 = barplot(data,col=col,yaxt="n",ylab="Relative Percent",xaxt="n",cex.lab=1.8)
+a2 = axis(2,tick=F,labels=F)
+axis(2,a2,paste0(a2*100,"%"))
+axis(1,a1,labels=F)
+par(srt=60,xpd=T);text(a1,-0.02,colnames(data),adj=1,cex=0.6);par(srt=0)
+ytick2 = cumsum(data[,ncol(data)])
+ytick1 = c(0,ytick2[-length(ytick2)])
+legend(par('usr')[2]*0.98,par('usr')[4],legend=rownames(data),col=col,pch=15,bty="n",cex=1.3)
+dev.off()
+
+#柱状图2
+library(tidyverse)
+cellnum <- read.table("CIBERSORT-Results.txt",sep="\t",header=T,row.names=1,check.names=F)
+cell.prop<- apply(cellnum, 1, function(x){x/sum(x)})
+my36colors <-c('#E5D2DD', '#53A85F', '#F1BB72', '#F3B1A0', '#D6E7A3', '#57C3F3', 
+               '#476D87','#E95C59', '#E59CC4', '#AB3282', '#23452F', '#BD956A', '#8C549C', 
+               '#585658','#9FA3A8', '#E0D4CA', '#5F3D69', '#C5DEBA', '#58A4C3', '#E4C755', 
+               '#F7F398','#AA9A59', '#E63863', '#E39A35', '#C1E6F3', '#6778AE', '#91D0BE', 
+               '#B53E2B', '#712820', '#DCC1DD', '#CCE0F5',  '#CCC9E6', '#625D9E', '#68A180', 
+               '#3A6963','#968175')
+data4plot <- data.frame()
+for (i in 1:ncol(cell.prop)) {
+  data4plot <- rbind(
+    data4plot,
+    cbind(cell.prop[,i],rownames(cell.prop),
+          rep(colnames(cell.prop)[i],nrow(cell.prop)
+          )
+    )
+  )
+}
+
+colnames(data4plot)<-c('proportion','celltype','sample')
+
+LC=filter(group,group$class=="RIF") %>% rownames() %>% as.character() #### 修改
+data4plott <- mutate(data4plot,class=ifelse(sample %in% LC,"RIF","Con"))  ### 修改
+
+data4plott$proportion <- as.numeric(data4plot$proportion)
+
+##### 画下一张图
+dev.off()
+dev.new()
+pdf(file="CIBERSORT22.pdf",height=10,width=22)
+p1 <- ggplot(data4plott,aes(sample,proportion,fill=celltype))+
+  geom_bar(stat="identity",position="fill")+
+  scale_fill_manual(values=my36colors)+#自定义fill的颜色
+  ggtitle("cell portation")+ coord_cartesian(ylim = c(0, 1))+
+  theme_minimal()+
+  guides(fill=guide_legend(title=NULL))+ theme(axis.text.x = element_blank())
+
+###制作分组颜色条‘("LC"="#7C87B5","HC"="#F1B37D")))
+df2 <- data4plott[,3:4] %>% unique() %>% mutate(.,x=1)
+
+df2$sample<-factor(df2$sample,levels = rev(df2$sample))
+
+#绘制样本分类色条
+p2 <- ggplot(df2,aes(sample,x,fill=class))+
+  geom_tile()+
+  scale_fill_manual(values = c("#7C87B5","#F1B37D"))+
+  guides(fill=guide_legend(title="cell_type"))+
+  theme(axis.title = element_blank(),
+        axis.text=element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background = element_blank(),
+        legend.key=element_blank(),  
+        legend.title=element_text(color="black",size=9),
+        legend.text = element_text(color="black",size=8), 
+        legend.spacing.x=unit(0.1,'cm'), 
+        legend.key.width=unit(0.4,'cm'), 
+        legend.key.height=unit(0.4,'cm'), 
+        legend.background=element_blank())
+library(aplot)
+insert_bottom(p1,p2,height=0.05)
+dev.off()
+
+save.image("1.RData")
+load("1.RData")
+#相关性图
+pdf("cor.pdf",height=13,width=13)
+par(oma=c(0.5,1,1,1.2))
+immune=immune[,colMeans(immune)>0]
+M=cor(immune)
+corrplot(M,
+         order="hclust",
+         method = "color",
+         addCoef.col = "black",
+         diag = TRUE,
+         tl.col="black",
+         col=colorRampPalette(c("blue", "white", "red"))(50))
+dev.off()
+
+
+save(group,file = "RIF_group.RData")
+#读取免疫细胞浸润文件 画小提琴
+
+setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\5.免疫浸润\\RIF")  
+rm(list=ls())
+rt=read.table("CIBERSORT-Results.txt", header=T, sep="\t", check.names=F, row.names=1)
+# group <-read.csv ("D:\\研一\\裴老板\\裴老板的小心肝\\liver\\1.获取基因以及批次矫正差异分析\\group_settt_14323.csv",sep=",",row.names = 1)
+load("RIF_group.RData")
+group <- select(group,3,4) %>% as.data.frame()
+colnames(group) <- c("sample","class")
+
+group<- group %>% mutate(.,group=recode(group$class,"RIF"="1","Con"="0"))
+rownames(group) == rownames(rt)
+group <- group$group %>% as.character()
+
+
+
+#获取正常及肿瘤组样本数目
+conNum=length(group[group==0])
+treatNum=length(group[group==1])
+Type=c(rep(1,conNum), rep(2,treatNum))
+
+#根据正常和肿瘤排序
+rt1 = rt[group == 0,]
+rt2 = rt[group == 1,]
+rt = rbind(rt1,rt2)
+
+
+#绘制小提琴图
+dev.new()
+outTab=data.frame()
+pdf(file="vioplotti.pdf", width=13, height=8)
+par(las=1,mar=c(10,6,3,3))
+x=c(1:ncol(rt))
+y=c(1:ncol(rt))
+plot(x, y,
+     xlim=c(0,63), ylim=c(min(rt), max(rt)+0.05),
+     main="", xlab="", ylab="Fraction",
+     pch=21,
+     col="white",
+     xaxt="n")
+#免疫细行循环
+for(i in 1:ncol(rt)){
+  if(sd(rt[1:conNum,i])==0){
+    rt[1,i]=0.00001
+  }
+  if(sd(rt[(conNum+1):(conNum+treatNum),i])==0){
+    rt[(conNum+1),i]=0.00001
+  }
+  #提取数据
+  rt1=rt[1:conNum,i]
+  rt2=rt[(conNum+1):(conNum+treatNum),i]
+  #绘制小提琴图
+  vioplot(rt1,at=3*(i-1),lty=1,add = T,col = 'blue')
+  vioplot(rt2,at=3*(i-1)+1,lty=1,add = T,col = 'red')
+  #统计检验
+  wilcoxTest <- wilcox.test(rt1,rt2)
+  # wilcoxTest=t.test(rt1,rt2)
+  p=wilcoxTest$p.value
+  if(p<1){
+    cellPvalue=cbind(Cell=colnames(rt)[i],pvalue=p)
+    outTab=rbind(outTab,cellPvalue)
+  }
+  mx=max(c(rt1,rt2))
+  lines(c(x=3*(i-1)+0.2,x=3*(i-1)+0.8),c(mx,mx))
+  #加上pvalue
+  text(x=3*(i-1)+0.5, y=mx+0.02, labels=ifelse(p<0.001, paste0("p<0.001"), paste0("p=",sprintf("%.03f",p))), cex = 0.8)
+}
+legend("topright", 
+       c("HC", "LC"),
+       lwd=3,bty="n",cex=1,
+       col=c("blue","red"))
+text(seq(1,64,3),-0.04,xpd = NA,labels=colnames(rt),cex = 1,srt = 45,pos=2)
+dev.off()
+dev.off()
+
+#输出免疫细胞和p值
+write.table(outTab,file="Diff.xls",sep="\t",row.names=F,quote=F)
+
+## 单个基因与免疫细胞相关性棒棒糖图 https://www.bilibili.com/read/cv19917790/?spm_id_from=333.999.0.0
+# load("1.RData")
+rm(list=ls())
+library(limma)
+library(reshape2)
+library(ggpubr)
+library(vioplot)
+library(ggExtra) 
+library(dplyr)
+#1.准备文件 提取疾病组
+rt=read.table("CIBERSORT-Results.txt", header=T, sep="\t", check.names=F, row.names=1)
+load("RIF_group.RData")
+group <- select(group,3,4) %>% as.data.frame()
+colnames(group) <- c("sample","class")
+group<- group %>% mutate(.,group=recode(group$class,"RIF"="1","Con"="0"))
+rownames(group) == rownames(rt)
+
+# 表达矩阵
+set_GSE111974 <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\settt_GSE11974_总表.csv",sep=",",
+                          row.names = 1) %>% t() %>% as.data.frame()
+exp <- select(set_GSE111974,"FUS") %>% as.data.frame()
+
+# load("D:\\研一\\裴老板\\裴老板的小心肝\\liver\\5.验证和富集分析\\GSE14323.RData")
+# group <-read.csv ("D:\\研一\\裴老板\\裴老板的小心肝\\liver\\1.获取基因以及批次矫正差异分析\\group_settt_14323.csv",sep=",",row.names = 1)
+# group <- group %>% mutate(.,group=recode(group$class,"LC"="1","HC"="0"))
+
+rownames(rt)==rownames(group)
+a <- filter(group,class=="RIF")
+tumorData <- rt[a$sample,]
+exp <- exp[a$sample,] %>% as.data.frame()
+rownames(exp) <- rownames(tumorData)
+
+### 确定顺序一致
+
+#合并计算相关性
+Total <- merge(exp,tumorData,by="row.names",all = TRUE)
+
+rownames(Total) <- Total[,1]
+
+Total <- select(Total,-1)
+names(Total)[1] <- c("FUS")
+
+Total <-apply(Total,2,as.numeric)
+rownames(Total) <- rownames(rt[a$sample,])
+# Total <- Total[,-13]
+
+#计算相关性
+library(Hmisc)
+res <- rcorr(as.matrix(Total),type =c("spearman"))
+To <-data.frame(res[1]) 
+k <- To[1,] %>% t() %>% as.data.frame() #显著性
+
+Too <-data.frame(res[3]) 
+l <- Too[1,] %>% t() %>% as.data.frame() # P值
+
+AQP9<- cbind(k,l)
+
+colnames(AQP9) <- c("cor","pvalue")
+rownames(AQP9) <- gsub("r.","",rownames(AQP9))
+rownames(AQP9) <- gsub("\\."," ",rownames(AQP9)) #\\ 反义符号
+AQP9 <- mutate(AQP9,Cell=rownames(AQP9))
+AQP9 <- select(AQP9,3,1,2)
+
+FUS <- AQP9[-c(1,6),]
+
+library(openxlsx)
+# CX3 <- read.xlsx("t.xlsx",sheet=1)
+TY <- read.xlsx("D:\\研一\\裴老板\\裴老板的小心肝\\liver\\5.验证和富集分析\\免疫浸润\\t.xlsx",sheet=2)
+
+TY <- FUS
+#定义圆圈颜色的函数
+p.col = c('gold','pink','orange','LimeGreen','darkgreen')
+fcolor = function(x,p.col){
+  color = ifelse(x>0.8,p.col[1],ifelse(x>0.6,p.col[2],ifelse(x>0.4,p.col[3],
+                                                             ifelse(x>0.2,p.col[4], p.col[5])
+  )))}
+
+#定义设置圆圈大小的函数
+p.cex = seq(2.5, 5.5, length=5)
+fcex = function(x){
+  x=abs(x)
+  cex = ifelse(x<0.1,p.cex[1],ifelse(x<0.2,p.cex[2],ifelse(x<0.3,p.cex[3],
+                                                           ifelse(x<0.4,p.cex[4],p.cex[5]))))
+  return(cex)
+} 
+
+#根据pvalue定义圆圈的颜色
+data <- TY #修改
+
+points.color = fcolor(x=data$pvalue,p.col=p.col)
+data$points.color = points.color
+points.cex = fcex(x=data$cor)
+data$points.cex = points.cex
+
+xlim = ceiling(max(abs(data$cor))*10)/10
+pdf(file="棒棒糖图.pdf", width=9, height=7)
+layout(mat=matrix(c(1,1,1,1,1,0,2,0,3,0),nc=2),width=c(8,2.2),heights=c(1,2,1,2,1))
+par(bg="white",las=1,mar=c(5,18,2,4),cex.axis=1.5,cex.lab=2)
+plot(1,type="n",xlim=c(-xlim,xlim),ylim=c(0.5,nrow(data)+0.5),xlab="Correlation Coefficient",ylab="",yaxt="n",yaxs="i",axes=F)
+rect(par('usr')[1],par('usr')[3],par('usr')[2],par('usr')[4],col="#F5F5F5",border="#F5F5F5")
+grid(ny=nrow(data),col="white",lty=1,lwd=2) 
+data=data[order(data$cor),]
+
+#绘制图形的线段
+segments(x0=data$cor,y0=1:nrow(data),x1=0,y1=1:nrow(data),lwd=4)
+#绘制图形的圆圈
+points(x=data$cor,y = 1:nrow(data),col = data$points.color,pch=16,cex=data$points.cex)
+#展示免疫细胞的名称
+text(par('usr')[1],1:nrow(data),data$Cell,adj=1,xpd=T,cex=1.5) 
+
+#展示pvalue
+pvalue.text=ifelse(data$pvalue<0.001,'<0.001',sprintf("%.03f",data$pvalue))
+redcutoff_cor=0
+redcutoff_pvalue=0.05
+text(par('usr')[2],1:nrow(data),pvalue.text,adj=0,xpd=T,col=ifelse(abs(data$cor)>redcutoff_cor & data$pvalue<redcutoff_pvalue,"red","black"),cex=1.5)
+axis(1,tick=F) 
+
+#绘制圆圈大小的图例
+par(mar=c(0,4,3,4))
+plot(1,type="n",axes=F,xlab="",ylab="")
+legend("left",legend=c(0.1,0.2,0.3,0.4,0.5),col="black",pt.cex=p.cex,pch=16,bty="n",cex=2,title="abs(cor)")
+
+#绘制圆圈颜色的图例
+par(mar=c(0,6,4,6),cex.axis=1.5,cex.main=2)
+barplot(rep(1,5),horiz=T,space=0,border=NA,col=p.col,xaxt="n",yaxt="n",xlab="",ylab="",main="pvalue")
+axis(4,at=0:5,c(1,0.8,0.6,0.4,0.2,0),tick=F)
+dev.off() 
+dev.off() 
+
