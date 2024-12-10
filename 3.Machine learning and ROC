@@ -209,38 +209,13 @@ View(set)
 View(group)
 ########### 一、lasso
 #1.构建表达矩阵
-# FOXM1
-# EZH2
-# ASPM
-# ANLN
-# NUF2
-# NDC80
-# exp <- set%>% mutate(.,Class=group[,4])
-View(group)
-View(set)
-View(group)
-View(set)
-View(group)
 set <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\settt_GSE11974_总表.csv",sep=",",row.names = 1)
 setT <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\MS_union.csv",sep=",",row.names = 1)
-# View(setT)
-# set <- set[,names(setT)]
-# names(setT)
-# View(set)
 set <- set[names(setT),]
-View(group)
-View(group)
-# exp <- t(set)%>% mutate(.,Class=group[,4])
+
 ########### 一、lasso
-#1.构建表达矩阵
-# FOXM1
-# EZH2
-# ASPM
-# ANLN
-# NUF2
-# NDC80
 exp <- t(set) %>% as.data.frame()%>% mutate(.,Class=group[,4])
-View(exp)
+
 #1.2将变量类型转换为同类数值型
 exp$Class<- ifelse(exp$Class=="RIF",1,0)
 write.csv(exp,"RIF72hub.csv")
@@ -359,6 +334,7 @@ load("5_倍_SVM_REF.RData")
 # 
 # rm(list=ls())
 # load("5_倍_SVM_REF.RData")
+
 #四、三种机器学习画Vein 取交集
 # lasso 结果是 lasso  RF 结果是P9  SVMREF 结果是tob
 rm(list=ls())
