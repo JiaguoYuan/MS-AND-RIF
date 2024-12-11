@@ -1,85 +1,76 @@
-#、一差异分析
+#Variance analysis
 rm(list=ls())
 setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.MS差异分析")
-library(dplyr)
 library(tidyverse)
 library(GEOquery)
-#1.MS 差异分析
+library(limma)
+
+##1.MS Variance analysis
+#1.1 Data preparation
 MS <- getGEO("GSE41848",destdir = ".",getGPL = F,AnnotGPL = F)
 MS_GPL <- getGEO("GPL16209",destdir = ".")
 MS_set <- exprs(MS[[1]])
 MS_group <- pData(MS[[1]])
 MS_groups <- filter(MS_group,source_name_ch1 %in%c("control_Baseline_untreated","MS patient_Baseline_untreated")) %>% filter(.,characteristics_ch1.1=="gender: female") %>% select(.,2,8) %>% 
 mutate(.,Class = recode(source_name_ch1,"MS patient_Baseline_untreated"="MS","control_Baseline_untreated"="CTRL"))
-#转ID
 MS_sett <- merge(x=MS_set,y=A,by.x="row.names",by.y="ID")
 Name <- MS_sett[,c(1,80)]
 rownames(Name) <- Name $Row.names
 Name$gene_assignment <- gsub(".*?//\\s*(.*?)\\s*///.*","\\1",Name$gene_assignment)
 MS_sett <- merge(x=MS_set,y=Name,by.x="row.names",by.y="Row.names") %>% select(.,1,71,2:70)
-#1.2 删除重复去除空值
 MS_sett <- filter(MS_sett,gene_assignment!="---")
-#1.3 重复取平均
-library(limma)
 MS_sett <- avereps(MS_sett[,-1],ID=MS_sett$gene_assignment)
-##step1
 dat <- expreSet
-group_c <-group$Class #分组矩阵
+group_c <-group$Class 
 design <- model.matrix(~0+factor(group_c))
 colnames(design)=levels(factor((group_c)))
 rownames(design)=rownames(group)
 contrast.matrix<-makeContrasts("MS-CTRL",levels=design)
 
-#判断是否矫正
+#1.2 Quality assessment
 expreSet <- MS_sett
 group <- MS_groups
 boxplot(expreSet,outline=FALSE, notch=T,col=as.factor(group$class), las=2)
-
 fit <- lmFit(dat,design)
 fit2 <- contrasts.fit(fit, contrast.matrix)
 fit2 <- eBayes(fit2)
 options(digits = 4)
 tempOutput = topTable(fit2, coef=1, n=Inf,adjust='BH')
 allDEG2 = na.omit(tempOutput)
-adj.P.Val = 0.05 # 自定义
-foldChange= 1 # 自定义
+adj.P.Val = 0.05 
+foldChange= 1 
 nrDEG_DESeq2_signif = allDEG2[(allDEG2$P.Value< adj.P.Val&(allDEG2$logFC>foldChange | allDEG2$logFC<(-foldChange))),]
 
-
+#1.3 Output
 write.csv(allDEG2,"allDEG2.csv")
 write.csv(nrDEG_DESeq2_signif,"nrDEG_limma_signif.csv")
 write.csv(group,"group_settt_41848.csv")  # 总分组
 write.csv(MS_sett,"settt_41847_总表.csv") # 总的表达矩阵
 save.image("MS_GSE41848_差异分析.RData")
 load("MS_GSE41848_差异分析.RData")
-
-#### 提取差异基因
-
 save(nrDEG_DESeq2_signif,MS_sett,group,file = "MS_diss.RData")
 load("D:/研一/珊姐/RIF/shan_RF/1.差异分析/1.MS差异分析/MS_diss.RData")
-###############################################################################################
-### 画热图与火山图
-####################################################################################################
+
+#1.4 Visualization of variance analysis
 setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.MS差异分析")
 rm(list=ls())
-###读取数据
-###画火山图
+library(ggpreal)
+
+#1.4.1 Input
 express <- read.csv("nrDEG_limma_signif.csv",sep=",") #有差异
 allDEG2 <- read.csv("allDEG2.csv",sep=",",row.names = 1)#总的数据
 settt <- read.csv("settt_41848_总表.csv",sep=",",row.names = 1)
 group <-  read.csv("group_settt_41848.csv",sep=",")
-
 group$Class<- ifelse(group$Class=="MS","MS","Con")
-library(ggrepel)
-#根据FC和Pvalue分组
+
+#1.4.2 Group
 data <- 
   allDEG2 %>% 
   mutate(scale= as.factor(ifelse(P.Value< 0.05 & abs(logFC) > 1,
                                  ifelse(logFC > 1 ,'Up','Down'),'No change'))) ##整体数据
 table(data$scale)
 
-#绘图标记
-
+#1.4.3 Volcano map
 ggplot(data,aes(logFC, -log10(P.Value)))+geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "#999999") + 
   geom_vline(xintercept = c(-1,1), linetype = "dashed", color = "#999999") + 
   geom_point(aes(color = scale),
@@ -92,38 +83,25 @@ ggplot(data,aes(logFC, -log10(P.Value)))+geom_hline(yintercept = -log10(0.05), l
   scale_x_continuous(breaks = seq(-500,500, by =250))+
   scale_y_continuous(breaks = seq(0,10,by=2))+ xlab("Log2FC")+ylab("-log10(pvalue)")
 
-# ###画热图
-# 
-# ###获取标准化数据和分组
-# express <- read.csv("Normal_express.csv",sep=",",row.names = 1)
-# group_3 <- group
-# colnames(express)==group$sample
-
-
-
-######画热图 原始数据取了log2
-#获取矩阵 =
-choose_50 <- arrange(express,adj.P.Val)%>% .[1:50,] #选择P前50
+#1.4.4  Heatmap
+library(ComplexHeatmap)
+library(circlize)
+library(pheatmap)
+choose_50 <- arrange(express,adj.P.Val)%>% .[1:50,] 
 rownames(express) <- express$X
-
-####scale 
+#scale 
 set <- settt[choose_50$X,] %>% t() %>% as.data.frame()%>% scale(.,center = T) %>% t() %>% as.data.frame()
-rownames(set)<- gsub("///.*", "", rownames(set)) #保留一个行名
-
-#读入注释数据
+rownames(set)<- gsub("///.*", "", rownames(set)) 
 group_4 <- group
 sort <-group_4 %>% .[,2:3]
 names(sort) <- c("gene","class")
 sort$class <- as.character(sort$class)
 
-library(ComplexHeatmap)
-library(circlize)
-library(pheatmap)
+
 Heatmap(set)
 
 a <- factor(sort$class,levels=("MS","Con"))
 
-#添加注释
 ha <- HeatmapAnnotation(Group=factor(sort$class,levels=c("MS","Con")),
                         col=list(Group=c("MS"="#F1B37D","Con"="#7C87B5")))
 
@@ -139,28 +117,27 @@ load("画图.Rdata")
 
 #######################################################
 #######################################################
-#二、RIF差异分析
+#2.RIF Variance analysis
 rm(list=ls())
 setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析")
-#1.下载原始数据 https://www.jianshu.com/p/9b1a1bda4ca5
+#2.1  Data preparation
 GSE111974 <- getGEO("GSE111974",getGPL =F,destdir = ".",AnnotGPL = F)
 A1_GSE111974 <- exprs(GSE111974[[1]]) %>% as.data.frame()
 RIF_group <- pData(GSE111974[[1]]) %>% .[,c(1,2)] %>% mutate(.,Class=c(rep("CTRL",24),rep("RIF",24)))
-#  ID转换
 GPL_GSE111974 <- getGEO("GPL17077",destdir = ".")
 GPL <- Table(GPL_GSE111974) %>% select(.,1,7)
 A1_GSE111974 <- merge(A1_GSE111974,GPL,by.x = "row.names",by.y = "ID")
 A1_GSE111974 <-A1_GSE111974[,-1]
 A1_GSE111974 <- filter(A1_GSE111974,GENE_SYMBOL!="")
 set <- avereps(A1_GSE111974[,-1],ID=A1_GSE111974$GENE_SYMBOL)
-##构建比较矩阵
 group <- RIF_group
-group_c <-group$Class #分组矩阵
+group_c <-group$Class 
 design <- model.matrix(~0+factor(group_c))
 colnames(design)=levels(factor((group_c)))
 rownames(design)=rownames(group)
 contrast.matrix<-makeContrasts("RIF-CTRL",levels=design)
-#1.4标准化否
+
+#2.2  Quality assessment
 expreSet <- set
 group <- group
 boxplot(expreSet,outline=FALSE, notch=T,col=as.factor(group$Class), las=2)
@@ -168,61 +145,48 @@ dat <- expreSet
 fit <- lmFit(dat,design)
 fit2 <- contrasts.fit(fit, contrast.matrix)
 fit2 <- eBayes(fit2)
-##step3
 options(digits = 4)
 tempOutput = topTable(fit2, coef=1, n=Inf,adjust='BH')
 allDEG2 = na.omit(tempOutput)
 View(allDEG2)
-adj.P.Val = 0.05 # 自定义
-foldChange= 1 # 自定义
+adj.P.Val = 0.05 
+foldChange= 1 
 nrDEG_DESeq2_signif = allDEG2[(allDEG2$P.Value< adj.P.Val&
 (allDEG2$logFC>foldChange | allDEG2$logFC<(-foldChange))),]
+
+#2.3 Output
 write.csv(allDEG2,"allDEG2.csv")
 write.csv(nrDEG_DESeq2_signif,"nrDEG_limma_signif.csv")
 write.csv(set,"settt_GSE11974_总表.csv") # 总的表达矩阵
 write.csv(group,"group_settt_11974.csv")  # 总分组
 save.image("RIF_GSE11974_差异分析.RData")
 load("RIF_GSE11974_差异分析.RData")
-
 RIF_diss <- nrDEG_DESeq2_signif
 RIF_gp <- group
 RIF_set <- set
 save(RIF_diss,RIF_gp,RIF_set,file = "RIF_diss.RData")
 load("D:/研一/珊姐/RIF/shan_RF/1.差异分析/1.RIF差异分析/RIF_diss.RData")
-getwd()
-rm(list=ls())
-#三、读取交集基因
-RIF <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\nrDEG_limma_signif.csv",sep=",")
-MS <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.MS差异分析\\nrDEG_limma_signif.csv",sep=",")
-x <- list(RIF_DEGs=RIF$X,MS_DEGs=MS$X)
-bd<- Reduce(intersect,x) %>% as.data.frame()
-library(ggvenn)
-ggvenn(x,fill_color = c("#9DB4CE"	,"#EDA1A4"),stroke_size = 0.5, set_name_size = 5,   fill_alpha = 0.5,  text_size = 6, show_percentage = F)
-write.csv(bd,"D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\bd.csv")
 
-###############################################################################
-#RIF 画图
-##############################################################################
+2.4 RIF  Visualization of variance analysis
 setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析")
 rm(list=ls())
-###读取数据
-###画火山图
-express <- read.csv("nrDEG_limma_signif.csv",sep=",") #有差异
-allDEG2 <- read.csv("allDEG2.csv",sep=",",row.names = 1)#总的数据
+library(ggrepel)
+
+#2.4.1 Input
+express <- read.csv("nrDEG_limma_signif.csv",sep=",") 
+allDEG2 <- read.csv("allDEG2.csv",sep=",",row.names = 1)
 settt <- read.csv("settt_GSE11974_总表.csv",sep=",",row.names = 1)
 group <-  read.csv("group_settt_11974.csv",sep=",")
-
 group$Class<- ifelse(group$Class=="RIF","RIF","Con")
-library(ggrepel)
-#根据FC和Pvalue分组
+
+#2.4.2 Group
 data <- 
   allDEG2 %>% 
   mutate(scale= as.factor(ifelse(P.Value< 0.05 & abs(logFC) > 1,
                                  ifelse(logFC > 1 ,'Up','Down'),'No change'))) ##整体数据
 table(data$scale)
 
-#绘图标记
-
+#2.4.3 Volcano map
 ggplot(data,aes(logFC, -log10(P.Value)))+geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "#999999") + 
   geom_vline(xintercept = c(-1,1), linetype = "dashed", color = "#999999") + 
   geom_point(aes(color = scale),
@@ -235,31 +199,21 @@ ggplot(data,aes(logFC, -log10(P.Value)))+geom_hline(yintercept = -log10(0.05), l
   scale_x_continuous(breaks = seq(-3,3, by =1))+
   scale_y_continuous(breaks = seq(0,20,by=5))+ xlab("Log2FC")+ylab("-log10(pvalue)")
 
-# ###画热图
-# 
-# ###获取标准化数据和分组
-# express <- read.csv("Normal_express.csv",sep=",",row.names = 1)
-# group_3 <- group
-# colnames(express)==group$sample
 
+#2.4.4  Heatmap
+library(ComplexHeatmap)
+library(circlize)
+library(pheatmap)
 
-
-######画热图 原始数据取了log2
-#获取矩阵 =
 choose_50 <- arrange(express,adj.P.Val)%>% .[1:50,] #选择P前50
 rownames(express) <- express$X
-
-####scale
+#scale
 set <- settt[choose_50$X,] %>% t() %>% as.data.frame()%>% scale(.,center = T) %>% t() %>% as.data.frame()
 rownames(set)<- gsub("///.*", "", rownames(set)) #保留一个行名
-#读入注释数据
 group_4 <- group
 sort <-group_4 %>% .[,3:4]
 names(sort) <- c("gene","class")
 sort$class <- as.character(sort$class)
-library(ComplexHeatmap)
-library(circlize)
-library(pheatmap)
 Heatmap(set)
 sort <- arrange(sort,desc(class))
 set <- set[,sort$gene]
@@ -272,3 +226,13 @@ dev.new()
 Heatmap(
   set, 
   top_annotation = ha,cluster_rows = T,cluster_columns = F,show_column_names = F,row_names_gp = gpar(fontsize = 8))
+
+#3.、Intersection
+rm(list=ls())
+library(ggvenn)
+RIF <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\nrDEG_limma_signif.csv",sep=",")
+MS <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.MS差异分析\\nrDEG_limma_signif.csv",sep=",")
+x <- list(RIF_DEGs=RIF$X,MS_DEGs=MS$X)
+bd<- Reduce(intersect,x) %>% as.data.frame()
+ggvenn(x,fill_color = c("#9DB4CE"	,"#EDA1A4"),stroke_size = 0.5, set_name_size = 5,   fill_alpha = 0.5,  text_size = 6, show_percentage = F)
+write.csv(bd,"D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\bd.csv")
