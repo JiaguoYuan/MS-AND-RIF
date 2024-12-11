@@ -1,5 +1,5 @@
-########## MS 机器学习
-####四、lasso
+########## MS 
+#1.lasso 
 rm(list=ls())
 setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\3.机器学习\\MS")
 library(dplyr)
@@ -7,23 +7,24 @@ library(tidyverse)
 library(openxlsx)
 set <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\MS_union.csv",sep=",",row.names = 1)
 group <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.MS差异分析\\group_settt_41847.csv",sep=",")
-########### 一、lasso
-#1.构建表达矩阵
+
+#1.1 
 exp <- set%>% mutate(.,Class=group[,3])
 save(exp,file="exp_un_RIF.RData")
-#1.2将变量类型转换为同类数值型
+
+#1.2
 exp$Class<- ifelse(exp$Class=="MS",1,0)
 write.csv(exp,"MS72hub.csv")
-#2设置结局变量等
+
+#1.3 Set outcome variables
 library("glmnet")
-y <- as.matrix(exp$Class)#结局变量
-x <- as.matrix(exp[,1:72])#自变量
-#3.binomial 因变量为二分类,alpha=1 表示L1正则化，也就是lasso
-set.seed(123)#设置随机数
+y <- as.matrix(exp$Class)
+x <- as.matrix(exp[,1:72])
+
+#1.4.binomial 
+set.seed(123)
 lasso_model <- glmnet(x,y,family="binomial",alpha=1)
 print(lasso_model)
-#解释 %Dev 模型拟合优度 越接近1越好
-#4.可视化 s= 选择lambda 大小
 plot(lasso_model,
      xvar = "lambda",
      label=F)
@@ -36,30 +37,25 @@ lamabdalse <- mod_cv$lambda.1se
 lamabdamin
 coef_lasso <- coef(lasso_model,s=lamabdamin)
 coef_lasso
-#根据回归系数计算OR
+#1.5
 exp(coef_lasso)
 coef_lasso <- coef_lasso %>% as.matrix() %>% as.data.frame()
 coef_lasso$OR <-exp(coef_lasso$s1)
-#挑选OR不为1
 lasso <- filter(coef_lasso,OR!=1) %>% .[-1,]
 save.image("MS_123_lasso.RData")
 load("MS_123_lasso.RData")
-# save.image("log2_MS_123_lasso.RData")
 write.csv(exp,"MS_Lasso_set.csv")
-# save.image("MS_lasso.RData")
-# load("MS_lasso.RData")
 write.csv(lasso,"Ms_lasso.csv")
-#########################################################################################
-###### 二、MS Random Forest
-######
+
+#2.Random Forest
 rm(list=ls())
 library("randomForest")
 library(caTools)
 load("exp_un_RIF.RData")
 expp <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\3.机器学习\\MS\\MS72hub.csv",sep=",",row.names = 1)
 exp$Class <- expp$Class
-# 100 150 0.47
-#2.创建随机森林回归 结局变量为因子如果是分类的话
+
+#2.1
 set.seed(100)  # Setting seed
 classifier_RF = randomForest(x=exp[,1:72],y=as.factor(exp$Class),ntree = 150)
 classifier_RF
@@ -70,10 +66,9 @@ confusion_mtx = table(as.factor(exp$Class), y_pred)
 confusion_mtx
 # Plotting model
 plot(classifier_RF)
-# Importance plot  重要性结果
+# Importance plot
 im <- importance(classifier_RF) %>% as.data.frame() %>%arrange(.,desc(MeanDecreaseGini))
 # Variable importance plot
-# 筛选重要度前30
 P9 <- head(im,30) %>% as.data.frame()
 P9 <- mutate(P9,Name <- rownames(P9))
 colnames(P9) <- c("Importance","Gene Sympol")
@@ -87,8 +82,7 @@ write.csv(P9,"RF_set.csv")
 save.image("MS_RF_机器学习.RData")
 load("MS_RF_机器学习.RData")
 
-# ###### 三、MS_SVM-RFE
-###### 三、SVM-RFE 并行计算
+#3. SVM-RFE
 # install.packages("e1071")
 # install.packages("doMPI",dependencies=TRUE) 
 rm(list=ls())
@@ -100,40 +94,43 @@ library(Rmpi) #并行计算要 C:\Program Files\Microsoft MPI\lib
 library(snow)
 library(parallel)
 library("e1071")
-#1.准备样本 即行为样本，列为基因，第一列是分组信息 因子是两组的
+
+#3.1 Input
 set <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\MS_union.csv",sep=",",row.names = 1)
 exp <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\3.机器学习\\MS\\MS72hub.csv",sep=",",row.names = 1)
 exp <- select(exp,73,1:72)
 exp$Class <- as.numeric(exp$Class)
-# #这里填写你存放的文件路
 input <- exp
-nfold = 5 #5倍交叉验证
+
+#3.2
+nfold = 5 
 nrows = nrow(input)
 folds = rep(1:nfold, len=nrows)[sample(nrows)]
 folds = lapply(1:nfold, function(x) which(folds == x))
 source('D:\\研一\\裴老板\\裴老板的小心肝\\liver\\4.机器学习\\msvmRFE.R') # 自定义函数
-#并行计算
-cl <- makeCluster(12) #初始化12个核 (parallel 包中
-clusterExport(cl, list("input","svmRFE","getWeights","svm"),envir = environment())#指定环境envir = environment
-results <-parLapply(cl,folds, svmRFE.wrap, input, k=5, halve.above=100) ### K 交叉验证
+
+#3.3 Parallel computing
+cl <- makeCluster(12) 
+clusterExport(cl, list("input","svmRFE","getWeights","svm"),envir = environment())envir = environment
+results <-parLapply(cl,folds, svmRFE.wrap, input, k=5, halve.above=100) #K 交叉验证
 top.features = WriteFeatures(results, input, save=F)
 clusterExport(cl, list("top.features","results", "tune","tune.control"))
-featsweep = parLapply(cl,1:72, FeatSweep.wrap, results, input) #1:100 是多少变量纳入模型，减去分组就是43
+featsweep = parLapply(cl,1:72, FeatSweep.wrap, results, input) 
 stopCluster(cl)
 save(featsweep,file = "featsweep.RData")
 load("featsweep.RData")
-#画图
+
+#3.4
 no.info = min(prop.table(table(input[,1])))
 errors = sapply(featsweep, function(x) ifelse(is.null(x), NA, x$error))
 #dev.new(width=4, height=4, bg='white')
 #pdf("B_svm-error.pdf",width = 5,height = 5)
-PlotErrors(errors, no.info=no.info) #查看错误率
+PlotErrors(errors, no.info=no.info) 
 #dev.off()
 #dev.new(width=4, height=4, bg='white')
 #pdf("B_svm-accuracy.pdf",width = 5,height = 5)
 Plotaccuracy(1-errors,no.info=no.info) #查看准确率
 #dev.off()
-# 图中红色圆圈所在的位置，即错误率最低点
 which.min(errors) 
 top<-top.features[1:which.min(errors), "FeatureName"] %>% as.data.frame()
 write.csv(top,"suv_top.csv")
@@ -143,9 +140,9 @@ load("un_SVM_REF_5K.RData")
 # save.image("5K_SVM_REF.RData")
 # rm(list=ls())
 # load("SVM_REF.RData")
-# stopCluster(cl) 释放
-#四、三种机器学习画Vein 取交集
-# lasso 结果是 lasso  RF 结果是P9  SVMREF 结果是tob
+# stopCluster(cl)
+
+#4 Three kinds of machine learning intersecting genes
 rm(list=ls())
 Lasso <- read.csv("Ms_lasso.csv",sep=",") 
 RF <- read.csv("RF_set.csv",sep=",")
@@ -157,8 +154,7 @@ ggvenn(x,fill_color = c("#9DB4CE"	,	"#F9C08A","#EDA1A4"),stroke_size = 0.5, set_
 write.csv(Ms_MA_3,"Ms_MA_3.csv")
 save.image("MS_MA_toTAl.RDtata")
 
-################################################################################### 两个取交集
-#五、画一个ROC曲线
+#5 ROC 
 rm(list=ls())
 load("exp_un_RIF.RData")
 exp <- select(exp,"FUS","Class")
@@ -167,68 +163,49 @@ save(exp,file = "GSE41847.RData")
 library(pROC)
 library(ggplot2)
 IL36G_t <- exp 
-# ROC计算 (IL36G_t[,6] 分组,前面分组
 rocobj <- roc(IL36G_t[,2], IL36G_t[,1],
-              smooth = F, levels=c("Con","")     # 曲线是否光滑，当光滑时，无法计算置信区间 前一个为对照
-) 
-# # 计算临界点/阈值
-# cutOffPoint <- coords(rocobj, "best")
-# 计算AUC值
+              smooth = F, levels=c("Con","")    
 auc<-auc(rocobj)[1]
-# # AUC的置信区间
-# auc_low<-ci(rocobj,of="auc")[1]
-# auc_high<-ci(rocobj,of="auc")[3]
-# 
-# # 计算置信区间
-# ciobj <- ci.se(rocobj,specificities=seq(0, 1, 0.01))
-# data_ci<-ciobj[1:101,1:3]
-# data_ci<-as.data.frame(data_ci)
-# x=as.numeric(rownames(data_ci))
-# data_ci<-data.frame(x,data_ci)
-# 绘图
 ggroc(rocobj,
       color="red",
       size=1,
       legacy.axes = TRUE)+
   theme_bw()+
-  geom_segment(aes(x = 0, y = 0, xend = 1, yend = 1),        # 绘制对角线
+  geom_segment(aes(x = 0, y = 0, xend = 1, yend = 1),      
                colour='grey', 
                linetype = 'dotdash',size=1)+theme(
                  axis.title.x = element_text(hjust = 0.5))+annotate("text",x=0.75,y=0.25,label=paste("AUC = ", round(auc,2)),size=6)+ggtitle(colnames(IL36G_t)[2]) +#修改
   theme(plot.title = element_text(hjust = 0.5))
 
 
-####################################################################
+######################################### RIF 
+1. Lasso
 rm(list=ls())
 setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\3.机器学习\\RIF")
 set <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\RIF_union.csv",sep=",",row.names = 1)
 group <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\group_settt_11974.csv",sep=",")
-View(group)
-rownames(group) <- group$X
-View(set)
-View(group)
-########### 一、lasso
-#1.构建表达矩阵
+
+#1.1 
 set <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\settt_GSE11974_总表.csv",sep=",",row.names = 1)
 setT <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\MS_union.csv",sep=",",row.names = 1)
 set <- set[names(setT),]
 
-########### 一、lasso
+#1.2
 exp <- t(set) %>% as.data.frame()%>% mutate(.,Class=group[,4])
 
-#1.2将变量类型转换为同类数值型
+#1.3
 exp$Class<- ifelse(exp$Class=="RIF",1,0)
 write.csv(exp,"RIF72hub.csv")
-y <- as.matrix(exp$Class)#结局变量
-x <- as.matrix(exp[,1:72])#自变量
-set.seed(123)#设置随机数
+y <- as.matrix(exp$Class)
+x <- as.matrix(exp[,1:72])
+
+#1.4 binomial
+set.seed(123)
 lasso_model <- glmnet(x,y,family="binomial",alpha=1)
 print(lasso_model)
-
 plot(lasso_model,
 xvar = "lambda",
 label=F)
-
 mod_cv <- cv.glmnet(x=x, y=y, family="binomial", # 默认nfolds = 10
 nfolds = 10, alpha=1)
 plot(mod_cv)
@@ -240,26 +217,18 @@ coef_lasso
 exp(coef_lasso)
 coef_lasso <- coef_lasso %>% as.matrix() %>% as.data.frame()
 coef_lasso$OR <-exp(coef_lasso$s1)
-#挑选OR不为1
 lasso <- filter(coef_lasso,OR!=1) %>% .[-1,] %>% as.data.frame()
 
 save.image("RIF_123_lasso.RData")
 load("RIF_123_lasso.RData")
-# 
-# save.image("MS_lasso.RData")
 
-# load("MS_lasso.RData")
-write.csv(lasso,"RIF_lasso.csv")
-# rm(list=ls())
-# install.packages("randomForest")
-# install.packages("caTools")       # For sampling the dataset
-
-############################################################################### RIF 
+#2. Random Forest
 rm(list=ls())
 library("randomForest")
 library(caTools)
 exp <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\3.机器学习\\RIF\\RIF72hub.csv",sep=",",row.names = 1)
-#2.创建随机森林回归 结局变量为因子如果是分类的话
+
+#2.1
 set.seed(100)  # Setting seed
 classifier_RF = randomForest(x=exp[,1:72],y=as.factor(exp$Class),ntree = 150)
 classifier_RF
@@ -270,11 +239,10 @@ confusion_mtx = table(as.factor(exp$Class), y_pred)
 confusion_mtx
 # Plotting model
 plot(classifier_RF)
-# Importance plot  重要性结果
+# Importance plot
 im <- importance(classifier_RF) %>% as.data.frame() %>% arrange(.,desc(MeanDecreaseGini))
 View(im)
 # Variable importance plot
-# 筛选重要度大于0.9的
 P9 <- head(im,30) %>% as.data.frame()
 P9 <- mutate(P9,Name <- rownames(P9))
 colnames(P9) <- c("Importance","Gene Sympol")
@@ -287,73 +255,71 @@ sorting = "descending")
 write.csv(P9,"RF_set.csv")
 save.image("RIF_RF_机器学习.RData")
 load("RIF_RF_机器学习.RData")
-###### 三、SVM-RFE 并行计算
+
+#3.SVM-RFE 
 # install.packages("e1071")
 # install.packages("doMPI",dependencies=TRUE)
 rm(list=ls())
 library(foreach)
 library(doMPI)
-library(Rmpi) #并行计算要 C:\Program Files\Microsoft MPI\lib
+library(Rmpi)
 library(snow)
 library(parallel)
 library("e1071")
-#1.准备样本 即行为样本，列为基因，第一列是分组信息 因子是两组的
+
+#3.1 Input
 exp <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\3.机器学习\\RIF\\RIF72hub.csv",sep=",",row.names = 1)
 exp <- select(exp,73,1:72)
 exp$Class <- as.numeric(exp$Class)
 input <- exp
-nfold = 5 #10倍交叉验证
+
+#3.2
+nfold = 5
 nrows = nrow(input)
 folds = rep(1:nfold, len=nrows)[sample(nrows)]
 folds = lapply(1:nfold, function(x) which(folds == x))
-source('D:\\研一\\裴老板\\裴老板的小心肝\\liver\\4.机器学习\\msvmRFE.R') # 自定义函数
+source('D:\\研一\\裴老板\\裴老板的小心肝\\liver\\4.机器学习\\msvmRFE.R') 
+
+#3.3 parallel computing
 cl <- makeCluster(12) #初始化12个核 (parallel 包中
-clusterExport(cl, list("input","svmRFE","getWeights","svm"),envir = environment())#指定环境envir = environment
-results <-parLapply(cl,folds, svmRFE.wrap, input, k=5, halve.above=100)##K  交叉验证
+clusterExport(cl, list("input","svmRFE","getWeights","svm"),envir = environment())#envir = environment
+results <-parLapply(cl,folds, svmRFE.wrap, input, k=5, halve.above=100)##
 top.features = WriteFeatures(results, input, save=F)
 clusterExport(cl, list("top.features","results", "tune","tune.control"))
-featsweep = parLapply(cl,1:72, FeatSweep.wrap, results, input) #1:100 是多少变量纳入模型，减去分组就是43
+featsweep = parLapply(cl,1:72, FeatSweep.wrap, results, input)
 stopCluster(cl)
 save(featsweep,file = "featsweep.RData")
 no.info = min(prop.table(table(input[,1])))
 errors = sapply(featsweep, function(x) ifelse(is.null(x), NA, x$error))
 #dev.new(width=4, height=4, bg='white')
 #pdf("B_svm-error.pdf",width = 5,height = 5)
-PlotErrors(errors, no.info=no.info) #查看错误率
+PlotErrors(errors, no.info=no.info) 
 #dev.new(width=4, height=4, bg='white')
 #pdf("B_svm-accuracy.pdf",width = 5,height = 5)
-Plotaccuracy(1-errors,no.info=no.info) #查看准确率
+Plotaccuracy(1-errors,no.info=no.info) 
 which.min(errors)
 # save.image("SVM_REF.RData")
 top<-top.features[1:which.min(errors), "FeatureName"] %>% as.data.frame()
-
-# write.csv(top,"suv_top.csv")
-# save.image("SVM_REF.RData")
 save.image("5_倍_SVM_REF.RData")
 load("5_倍_SVM_REF.RData")
-# 
-# rm(list=ls())
-# load("5_倍_SVM_REF.RData")
 
-#四、三种机器学习画Vein 取交集
-# lasso 结果是 lasso  RF 结果是P9  SVMREF 结果是tob
+
+#4 Three kinds of machine learning intersecting genes
 rm(list=ls())
+library(ggvenn)
 # Lasso <- read.csv("RIF_Lasso_set.csv",sep=",") %>% names(.) %>% as.data.frame() %>% .[-1,] %>% as.data.frame()
 Lasso <- read.csv("RIF_Lasso.csv",sep=",")
-View(Lasso)
 RF <- read.csv("RF_set.csv",sep=",")
 SVM <- read.csv("suv_top.csv",sep=",")
 x<-list(Lasso =Lasso$X,RF=RF$Gene.Sympol,SVM_REF=SVM$.)
 Ms_MA_3 <- Reduce(intersect,x) %>% as.data.frame()
-library(ggvenn)
 ggvenn(x,fill_color = c("#9DB4CE"	,	"#F9C08A","#EDA1A4"),stroke_size = 0.5, set_name_size = 5,   fill_alpha = 0.5,  text_size = 6, show_percentage = F)
 RIF_MA_3 <- Reduce(intersect,x) %>% as.data.frame()
 rm(Ms_MA_3)
 write.csv(Ms_MA_3,"RIF_MA_3.csv")
 save.image("RIF_MA_toTAl.RDtata")
 
-###################################### ########################################单独基因画一个ROC
-#五、画一个ROC曲线
+#5 ROC 
 rm(list=ls())
 load("exp_un_RIF.RData")
 exp <- select(exp,"FUS","Class")
@@ -362,37 +328,20 @@ save(exp,file = "GSE11974.RData")
 library(pROC)
 library(ggplot2)
 IL36G_t <- exp 
-# ROC计算 (IL36G_t[,6] 分组,前面分组
 rocobj <- roc(IL36G_t[,2], IL36G_t[,1],
-              smooth = F, levels=c("Con","RIF")     # 曲线是否光滑，当光滑时，无法计算置信区间 前一个为对照
-) 
-# # 计算临界点/阈值
-# cutOffPoint <- coords(rocobj, "best")
-
-# 计算AUC值
+              smooth = F, levels=c("Con","RIF") ) 
 auc<-auc(rocobj)[1]
-# # AUC的置信区间
-# auc_low<-ci(rocobj,of="auc")[1]
-# auc_high<-ci(rocobj,of="auc")[3]
-# 
-# # 计算置信区间
-# ciobj <- ci.se(rocobj,specificities=seq(0, 1, 0.01))
-# data_ci<-ciobj[1:101,1:3]
-# data_ci<-as.data.frame(data_ci)
-# x=as.numeric(rownames(data_ci))
-# data_ci<-data.frame(x,data_ci)
-# 绘图
 ggroc(rocobj,
       color="red",
       size=1,
       legacy.axes = TRUE)+
   theme_bw()+
-  geom_segment(aes(x = 0, y = 0, xend = 1, yend = 1),        # 绘制对角线
+  geom_segment(aes(x = 0, y = 0, xend = 1, yend = 1),       
                colour='grey', 
                linetype = 'dotdash',size=1)+theme(
                  axis.title.x = element_text(hjust = 0.5))+
   annotate("text",x=0.75,y=0.25,
-           label=paste("AUC = ", round(auc,2)),size=6)+ggtitle(colnames(IL36G_t)[1]) +#修改
+           label=paste("AUC = ", round(auc,2)),size=6)+ggtitle(colnames(IL36G_t)[1]) +
   theme(plot.title = element_text(hjust = 0.5))
 
 
