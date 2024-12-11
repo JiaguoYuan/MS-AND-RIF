@@ -3,23 +3,26 @@ rm(list=ls())
 library(dplyr)
 library(tidyverse)
 library(openxlsx)
-############################# MS  WGCNA 
+#1 MS  WGCNA 
 setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\MS")
-##1.1input
+
+#1.1 Input
 set <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.MS差异分析\\settt_41848_总表.csv",sep=",",row.names = 1)
 group <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.MS差异分析\\group_settt_41848.csv",sep=",")
 rownames(group) <- group$X
 
-##1.2MS WGCNA
+##1.2 MS WGCNA
 library(WGCNA)  
 options(stringsAsFactors = FALSE)
-#1.Data preparation
+
+#1.2.1.Data preparation
 exp <- t(set) %>% as.data.frame()
-#1.2Check for deletions
+
+#1.2.2 Check for deletions
 gsa <- goodSamplesGenes(exp,verbose = 3)
 gsa$allOK
 
-#1.3Check for outliers 
+#1.2.3 Check for outliers 
 sampleTree = hclust(dist(exp), method = "average")
 sizeGrWindow(12,9) 
 par(cex = 0.6);
@@ -35,27 +38,27 @@ exp = exp[keepSamples, ]
 nGenes = ncol(exp)
 nSamples = nrow(exp)
 
-#1.4group
+#1.2.4 Group
 group <- group[rownames(exp),]%>%.[,3] %>% as.data.frame() 
 group <- mutate(group,class=recode(.,"MS"=1,"CTRL"=0))
 groupp <- group[,-1] %>% as.data.frame()
 rownames(groupp) <- rownames(exp)
 
-#1.5Phenotype is associated with the sample
+#1.2.5 Phenotype is associated with the sample
 sampleTree2 = hclust(dist(exp), method = "average")
-traitColors = numbers2colors(groupp, signed = FALSE) #用颜色代表关联度
+traitColors = numbers2colors(groupp, signed = FALSE)
 
 plotDendroAndColors(sampleTree2, traitColors,
                     groupLabels = names(groupp),
                     main = "Sample dendrogram and trait heatmap")
-#2.Build an expression network
-#2.1Estimate soft thresholds
+
+#1.2.6 Build an expression network. Estimate soft thresholds
 library(WGCNA)
 options(stringsAsFactors = FALSE);
 enableWGCNAThreads()  #Enable multithreading
 powers = c(c(1:10), seq(from = 12, to=20, by=2))
 sft = pickSoftThreshold(exp, powerVector = powers,verbose = 5,networkType = "signed")
-#2.2 
+
 sizeGrWindow(9, 5);
 par(mfrow = c(1,2));
 cex1 = 0.9;
@@ -65,17 +68,13 @@ plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
 text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
      labels=powers,cex=cex1,col="red");
 abline(h=0.85,col="red")
-axis(side=2,at=0.85)#查看位于0.85以上的点，可以改变高度值,最低不能低于0.8
-
+axis(side=2,at=0.85)
 softPower =sft$powerEstimate
 sft$powerEstimate
-
 plot(sft$fitIndices[,1], sft$fitIndices[,5],
      xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
      main = paste("Mean connectivity"))
 text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
-
-#2.3
 net = blockwiseModules(exp, power = 9 ,
                        TOMType = "signed", minModuleSize = 30,
                        reassignThreshold = 0, mergeCutHeight = 0.2,
@@ -84,15 +83,13 @@ net = blockwiseModules(exp, power = 9 ,
                        saveTOMFileBase = "femaleMouseTOM",
                        verbose = 3)
 table(net$colors) 
-
-
 sizeGrWindow(12, 9)
 mergedColors = labels2colors(net$colors)
 plotDendroAndColors(net$dendrograms[[1]], mergedColors[net$blockGenes[[1]]],
                     "Module colors",
                     dendroLabels = FALSE, hang = 0.03,
                     addGuide = TRUE, guideHang = 0.05)
-#2.4 save
+#1.2.7 Save
 moduleLabels = net$colors
 moduleColors = labels2colors(net$colors)
 MEs = net$MEs;
@@ -100,18 +97,15 @@ geneTree = net$dendrograms[[1]];
 save(MEs, moduleLabels, moduleColors, geneTree,
      file = "FemaleLiver-02-networkConstruction-auto.RData")
 
-#3. correlation
+#1.2.8 Correlation
 lnames = load(file = "FemaleLiver-02-networkConstruction-auto.RData")
 nGenes = ncol(exp)
 nSamples = nrow(exp)
-#3.1
 MEs0 = moduleEigengenes(exp, moduleColors)$eigengenes
 MEs = orderMEs(MEs0)
 moduleTraitCor = cor(MEs, groupp, use = "p",method="spearman");
 moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)
-# 3.2
 sizeGrWindow(10,6)
-########
 pva <- moduleTraitPvalue %>% as.data.frame() %>% filter(.,.<0.05)
 mo <- moduleTraitCor %>% as.data.frame() %>% .[rownames(pva),] %>% as.data.frame()
 MEss <- MEs[,rownames(pva)]
@@ -145,7 +139,6 @@ mo <- as.matrix(mo)
 textMatrix = paste(signif(mo, 2), "\n(",
                    signif(pvaa, 3), ")", sep = "");
 dim(textMatrix) = dim(mo)
-
 dev.off()
 dev.new()
 par(mar = c(3, 8.5, 3, 1))
@@ -163,6 +156,7 @@ labeledHeatmap(Matrix = mo,
 X <- moduleTraitCor %>% as.data.frame()
 X <- filter(X,X$.>0.3|X$.< -0.3)
 
+#1.2.9 Output
 # MEpaleturquoise" "MEgreenyellow"   "MEyellow"        "MEskyblue"       "MEmagenta"       "MEsalmon
 A<- colnames(exp)[moduleColors == "paleturquoise"] %>% as.data.frame()
 B<- colnames(exp)[moduleColors == "greenyellow"] %>% as.data.frame()
@@ -170,82 +164,72 @@ C<- colnames(exp)[moduleColors == "yellow"] %>% as.data.frame()
 D<- colnames(exp)[moduleColors == "skyblue"] %>% as.data.frame()
 E<- colnames(exp)[moduleColors == "magenta"] %>% as.data.frame()
 H<- colnames(exp)[moduleColors == "salmon"] %>% as.data.frame()
-
- T <- rbind(A,B,C,D,E,H)
+T <- rbind(A,B,C,D,E,H)
 MS_WGCNA_diss <- T
-
 save(MS_WGCNA_diss,file="MS_WGCNA_diss.Rdata")
-rm(list=ls())
-load("D:/研一/珊姐/RIF/shan_RF/2.WGCNA/MS_WGCNA_diss.Rdata")
-save.image("MS_WGCNA.RData")
-load("D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\MS\\MS_WGCNA.RData")
 
 ################################################
 ################################################
 rm(list=ls())
-#二、RIF WGCNA
+#2. RIF WGCNA
 library(dplyr)
 library(tidyverse)
 library(openxlsx)
-############################# RIF  WGCNA 
 rm(list=ls())
 setwd("D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\RIF")
-##一.input
+
+#2.1 Input
+
 set <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\settt_GSE11974_总表.csv",sep=",",row.names = 1)
 group <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.RIF差异分析\\group_settt_11974.csv",sep=",")
 rownames(group) <- group$X
 
-##二\WGCNA
+#2.2 RIF WGCNA
 library(WGCNA)  #加载WGCNA包
 options(stringsAsFactors = FALSE)
-#1.数据准备
-#1.1转置生成行为样本，列为基因
+
+#2.1 Data preparation
 exp <- t(set) %>% as.data.frame()
 # rownames(exp) <- AD_group$grou
-#1.2检查是否有缺失和NA  T 没有
+
+#2.2.2 Check for deletions
 gsa <- goodSamplesGenes(exp,verbose = 3)
 gsa$allOK
 
-#1.3检查是否有离群样本 
+#2.2.3 Check for outliers 
 sampleTree = hclust(dist(exp), method = "average")
-sizeGrWindow(12,9) #视图
+sizeGrWindow(12,9) 
 par(cex = 0.6);
 par(mar = c(0,4,2,0))
 plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5,
      cex.axis = 1.5, cex.main = 2)
-
-##如果有离群删除离群 18000
-abline(h = 170, col = "red") #划定需要剪切的枝长
+abline(h = 170, col = "red") 
 clust = cutreeStatic(sampleTree, cutHeight = 170, minSize = 10)
-#这时候会从高度为15这里横切，把离群样本分开
 table(clust)   
-keepSamples = (clust==1)  #保留非离群(clust==1)的样本
-exp = exp[keepSamples, ]  #去除离群值后的数据
+keepSamples = (clust==1) 
+exp = exp[keepSamples, ]  
 nGenes = ncol(exp)
 nSamples = nrow(exp)
-# rownames(group) <- group$X
-#1.4读取表型 行名为样本 列为表型,表芯必须为数值型
+
+#2.2.4 Group
 group <- group[rownames(exp),]%>%.[,4] %>% as.data.frame() 
 group <- mutate(group,class=recode(.,"RIF"=1,"CTRL"=0))
 groupp <- group[,-1] %>% as.data.frame()
 rownames(groupp) <- rownames(exp)
 
-#1.5表型与样本关联
+#2.2.5 Phenotype is associated with the sample
 sampleTree2 = hclust(dist(exp), method = "average")
-traitColors = numbers2colors(groupp, signed = FALSE) #用颜色代表关联度
-
+traitColors = numbers2colors(groupp, signed = FALSE) 
 plotDendroAndColors(sampleTree2, traitColors,
                     groupLabels = names(groupp),
                     main = "Sample dendrogram and trait heatmap")
-#2.构建表达网络
-#2.1估算软阈值
+
+#2.2.6 Build an expression network. Estimate soft thresholds
 library(WGCNA)
 options(stringsAsFactors = FALSE);
 enableWGCNAThreads()  #开启多线程
-
 powers = c(c(1:10), seq(from = 12, to=20, by=2))
 sft = pickSoftThreshold(exp, powerVector = powers,verbose = 5,networkType = "signed")
-#2.2 对软阈值进行绘图，确定选择，一般选第一个到达0.9的，最低可降到0.8
 sizeGrWindow(9, 5);
 par(mfrow = c(1,2));
 cex1 = 0.9;
@@ -255,17 +239,11 @@ plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
 text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
      labels=powers,cex=cex1,col="red");
 abline(h=0.85,col="red")
-axis(side=2,at=0.85)#查看位于0.85以上的点，可以改变高度值,最低不能低于0.8
-
-# # 选择最佳，如果没有就选择第一个到达红线的
-# softPower =sft$powerEstimate
-# sft$powerEstimate
-# 平均连接度，到达16开始扁平
+axis(side=2,at=0.85)
 plot(sft$fitIndices[,1], sft$fitIndices[,5],
      xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
      main = paste("Mean connectivity"))
 text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
-#2.3一步法计算模块 power软阈值，minModuleSize = 30 最小基因，mergeCutHeight = 0.25 保留高度 unsigned 不区分正负相关 9
 net = blockwiseModules(exp, power = 8 ,
                        TOMType = "signed", minModuleSize = 30,
                        reassignThreshold = 0, mergeCutHeight = 0.2,
@@ -273,45 +251,37 @@ net = blockwiseModules(exp, power = 8 ,
                        saveTOMs = TRUE,
                        saveTOMFileBase = "femaleMouseTOM",
                        verbose = 3)
-table(net$colors) #查看模块数量
-
-
+table(net$colors)
 sizeGrWindow(12, 9)
 mergedColors = labels2colors(net$colors)
 plotDendroAndColors(net$dendrograms[[1]], mergedColors[net$blockGenes[[1]]],
                     "Module colors",
                     dendroLabels = FALSE, hang = 0.03,
                     addGuide = TRUE, guideHang = 0.05)
-#2.4保存模块结果
+#2.2.7 Save
 moduleLabels = net$colors
 moduleColors = labels2colors(net$colors)
 MEs = net$MEs;
 geneTree = net$dendrograms[[1]];
 save(MEs, moduleLabels, moduleColors, geneTree,
      file = "FemaleLiver-02-networkConstruction-auto.RData")
-#3计算相关性
 
+#2.2.8 Correlation
 lnames = load(file = "FemaleLiver-02-networkConstruction-auto.RData")
 nGenes = ncol(exp)
 nSamples = nrow(exp)
-#3.1重新计算带有颜色标签的模块 exp 为表达矩阵 datTraits为表型 也就是groupp
 MEs0 = moduleEigengenes(exp, moduleColors)$eigengenes
 MEs = orderMEs(MEs0)
 moduleTraitCor = cor(MEs, groupp, use = "p",method="spearman");
 moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)
-# 3.2过相关值对每个关联进行颜色编码
 sizeGrWindow(10,6)
-# 展示模块与表型数据的相关系数和 P值
 textMatrix = paste(signif(moduleTraitCor, 2), "\n(",
                    signif(moduleTraitPvalue, 3), ")", sep = "");
 dim(textMatrix) = dim(moduleTraitCor)
 par(mar = c(6, 8.5, 3, 3))
-# 用热图的形式展示相关系数
 pdf("WGCNA_labeledHeatmap.pdf", width = 10, height = 8)
 
-# 先调整边距以确保图形区域足够大
 par(mar = c(10, 10, 10, 10)) # 设置合适的边距
-
 png("WGCNA_labeledHeatmasp.png", width = 4800, height = 4800, res = 300)
 labeledHeatmap(Matrix = moduleTraitCor,
                xLabels = names(groupp),
@@ -326,23 +296,16 @@ labeledHeatmap(Matrix = moduleTraitCor,
                main = paste("Module-trait relationships"))
 dev.new()
 dev.off()
-#colors = greenWhiteRed(50)不适用于红绿色盲患者，建议用 blueWhiteRed代替.
-
-
-
+#p<0.05
 pva <- moduleTraitPvalue %>% as.data.frame() %>% filter(.,.<0.05)
 mo <- moduleTraitCor %>% as.data.frame() %>% .[rownames(pva),] %>% as.data.frame()
 MEss <- MEs[,rownames(pva)]
 rownames(mo) <- rownames(pva)
-
 pvaa <- as.matrix(pva)
 mo <- as.matrix(mo)
-
 textMatrix = paste(signif(mo, 2), "\n(",
                    signif(pvaa, 3), ")", sep = "");
 dim(textMatrix) = dim(mo)
-
-
 dev.off()
 dev.new()
 par(mar = c(3, 8.5, 3, 1))
@@ -356,22 +319,14 @@ labeledHeatmap(Matrix = mo,
                setStdMargins = FALSE,
                cex.text = 0.5,
                zlim = c(-1,1),
-               main = paste("Module-trait relationships"))
-###### 画图
 
-
-#提取感兴趣模块基因
-# 提取大于0.8的 有6个
+#2.2.9 Output
 X <- moduleTraitCor %>% as.data.frame()
 X <- filter(X,X$.>0.8|X$.< -0.8)
-
 # [1] "MElightcyan"   "MEfloralwhite" "MEskyblue"  
-
-
 A<- colnames(exp)[moduleColors == "lightcyan"] %>% as.data.frame()
 B<- colnames(exp)[moduleColors == "floralwhite"] %>% as.data.frame()
 C<- colnames(exp)[moduleColors == "skyblue"] %>% as.data.frame()
-
 T <- rbind(A,B,C)
 IF_WGCNA_diss <- T
 save(RIF_WGCNA_diss,file="RIF_WGCNA_diss.Rdata")
@@ -380,53 +335,23 @@ write.csv (B,"floralwhite.csv")
 write.csv (C,"skyblue.csv")
 write.csv (T,"D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\RIF\\RIF_WGCNA.csv")
 
-
 save.image("RIF_WGCNA.RData")
 load("D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\RIF\\RIF_WGCNA.RData")
 
 
-############################### 
-
-
-A<- colnames(exp)[moduleColors == "paleturquoise"] %>% as.data.frame()
-B<- colnames(exp)[moduleColors == "greenyellow"] %>% as.data.frame()
-C<- colnames(exp)[moduleColors == "yellow"] %>% as.data.frame()
-
-D<- colnames(exp)[moduleColors == "skyblue"] %>% as.data.frame()
-E<- colnames(exp)[moduleColors == "magenta"] %>% as.data.frame()
-FF<- colnames(exp)[moduleColors == "salmon"] %>% as.data.frame()
-G<- colnames(exp)[moduleColors == "purple"] %>% as.data.frame()
-
-
-RIF_GSE111974_Pos<- rbind(A,B,C)
-
-RIF_GSE111974_Neg <- rbind(D,E,FF,G)
-
-
-save(RIF_GSE111974_Pos,RIF_GSE111974_Neg,
-file="D:/研一/珊姐/RIF/shan_RF/RIF_yjg_v1_24.8.22/24.11.29 返修/RIF返修/1.WGCNA/RIF/GSE111974_WGCNA")
-
-
-
-
 ####################
-#
+#3. Hub genes 
 B <-list(MS_WGCNA=MS_T$.,RIF_WGCNA=RIF_T$.)
 MS_RIF_WGCNA <- Reduce(intersect,B) %>% as.data.frame()
 write.csv(MS_RIF_WGCNA,"D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\MS_RIF_WGCNA.csv")
-
 ggvenn(B,fill_color = c("#9DB4CE"	,"#EDA1A4"),stroke_size = 0.5, set_name_size = 5,   fill_alpha = 0.5,  text_size = 6, show_percentage = F)
-
-## 
+##
 MS_RIF_bd <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\bd.csv",sep=",")
-
-
 C <- list(DEGs=MS_RIF_bd$.,WGCNA=MS_RIF_WGCNA$.)
 Final <- Reduce(union,C) 
-## 获取并集基因list
 MS_set <- read.csv("D:\\研一\\珊姐\\RIF\\shan_RF\\1.差异分析\\1.MS差异分析\\settt_41847_总表.csv",sep=",",row.names = 1) %>% t(.) %>% as.data.frame()
 MS_union <- MS_set[,Final]
-#输出
+#output
 write.csv(RIF_union,"D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\RIF_union.csv")
 write.csv(MS_union,"D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\MS_union.csv")
 save.image("D:\\研一\\珊姐\\RIF\\shan_RF\\2.WGCNA\\MS_RIF_Union.csv")
